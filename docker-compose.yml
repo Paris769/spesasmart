@@ -1,0 +1,86 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: spesasmart_db
+    environment:
+      POSTGRES_USER: spesasmart
+      POSTGRES_PASSWORD: spesasmart_dev
+      POSTGRES_DB: spesasmart
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spesasmart"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: spesasmart_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    container_name: spesasmart_search
+    environment:
+      MEILI_MASTER_KEY: spesasmart_search_key
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilidata:/meili_data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: spesasmart_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://spesasmart:spesasmart_dev@db:5432/spesasmart
+      REDIS_URL: redis://redis:6379/0
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: spesasmart_search_key
+      SECRET_KEY: change_this_in_production_32chars
+      PEPESTO_API_KEY: ${PEPESTO_API_KEY:-}
+      PRISY_API_KEY: ${PRISY_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: spesasmart_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_MAPTILER_KEY: ${MAPTILER_KEY:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    command: npm run dev
+
+volumes:
+  pgdata:
+  redisdata:
+  meilidata:

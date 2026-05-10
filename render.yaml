@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: spesasmart-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # inserisci manualmente nella dashboard Render
+      - key: REDIS_URL
+        sync: false          # inserisci manualmente (Upstash)
+      - key: SECRET_KEY
+        generateValue: true  # Render genera automaticamente
+      - key: PEPESTO_API_KEY
+        sync: false
+      - key: PRISY_API_KEY
+        sync: false
+      - key: MEILI_URL
+        value: ""            # disabilitato nel free tier
+      - key: MEILI_MASTER_KEY
+        value: ""
+      - key: PYTHON_VERSION
+        value: "3.12.0"

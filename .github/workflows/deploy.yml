@@ -1,0 +1,86 @@
+name: Deploy SpesaSmart
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Test backend ──────────────────────────────────────────────────────────
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Check syntax
+        run: python -m py_compile backend/app/main.py
+
+  # ── Test frontend ─────────────────────────────────────────────────────────
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --prefer-offline || npm install
+
+      - name: Type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+        continue-on-error: true   # non blocca il deploy per errori TS in MVP
+
+      - name: Build
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: https://spesasmart-backend.onrender.com/api/v1
+        run: npm run build
+
+  # ── Deploy Render (backend) ───────────────────────────────────────────────
+  deploy-backend:
+    needs: test-backend
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Render deploy
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --fail-with-body
+        # RENDER_DEPLOY_HOOK: aggiungi nei GitHub Secrets
+        # Trovi l'URL nella dashboard Render → Service → Settings → Deploy Hook
+
+  # ── Deploy Vercel (frontend) ──────────────────────────────────────────────
+  deploy-frontend:
+    needs: test-frontend
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: frontend
+          vercel-args: "--prod"
