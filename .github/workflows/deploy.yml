@@ -50,7 +50,7 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          NEXT_PUBLIC_API_URL: https://spesasmart-backend.onrender.com/api/v1
+          NEXT_PUBLIC_API_URL: https://spesasmart-backend-4kyf.onrender.com/api/v1
         run: npm run build
 
   # ── Deploy Render (backend) ───────────────────────────────────────────────
