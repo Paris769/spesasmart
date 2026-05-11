@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "env": {
-    "NEXT_PUBLIC_API_URL": "https://spesasmart-backend.onrender.com/api/v1"
+    "NEXT_PUBLIC_API_URL": "https://spesasmart-backend-4kyf.onrender.com/api/v1"
   },
   "headers": [
     {
