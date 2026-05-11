@@ -35,6 +35,31 @@ DB_URL = (
     .replace("postgresql+asyncpg://", "postgresql://")
 )
 
+# Chains that must exist in the DB. Inserted on first run if missing.
+_CHAINS_SEED = [
+    ("Esselunga", "esselunga", True,  "https://www.esselunga.it/area-utente/spesa/home.html", "redirect"),
+    ("Conad",     "conad",     True,  "https://www.conad.it/conad/home.html",                  "redirect"),
+    ("Carrefour", "carrefour", True,  "https://www.carrefour.it/spesa-online/",                 "redirect"),
+    ("Coop",      "coop",      True,  "https://www.cooponline.it",                              "redirect"),
+    ("Lidl",      "lidl",      False, None,                                                      "none"),
+    ("Eurospin",  "eurospin",  False, None,                                                      "none"),
+    ("Pam",       "pam",       True,  "https://www.pampanorama.it/spesa-online",                "redirect"),
+    ("MD",        "md",        False, None,                                                      "none"),
+    ("Iper",      "iper",      False, None,                                                      "none"),
+    ("Famila",    "famila",    False, None,                                                      "none"),
+]
+
+
+async def ensure_chains(conn: asyncpg.Connection) -> None:
+    """Insert any missing chains so spiders can always find their chain_id."""
+    for name, slug, has_shop, shop_url, integration in _CHAINS_SEED:
+        await conn.execute(
+            """INSERT INTO chains (name, slug, has_online_shop, shop_url, integration_type, is_active)
+               VALUES ($1, $2, $3, $4, $5, TRUE)
+               ON CONFLICT (slug) DO NOTHING""",
+            name, slug, has_shop, shop_url, integration,
+        )
+
 
 async def run_esselunga(conn: asyncpg.Connection, dry_run: bool, discover_only: bool) -> None:
     async with httpx.AsyncClient() as client:
@@ -105,6 +130,7 @@ async def main(args: argparse.Namespace) -> None:
 
     conn = await asyncpg.connect(DB_URL)
     try:
+        await ensure_chains(conn)
         chains = (
             [args.chain]
             if args.chain != "all"
