@@ -152,7 +152,9 @@ INSERT INTO chains (name, slug, logo_url, has_online_shop, shop_url, integration
 ('Lidl',        'lidl',       NULL, FALSE, NULL,                                                      'none'),
 ('Eurospin',    'eurospin',   NULL, FALSE, NULL,                                                      'none'),
 ('Pam',         'pam',        NULL, TRUE,  'https://www.pampanorama.it/spesa-online',                'redirect'),
-('MD',          'md',         NULL, FALSE, NULL,                                                      'none');
+('MD',          'md',         NULL, FALSE, NULL,                                                      'none'),
+('Iper',        'iper',       NULL, FALSE, NULL,                                                      'none'),
+('Famila',      'famila',     NULL, FALSE, NULL,                                                      'none');
 
 -- Categorie base
 INSERT INTO categories (name, slug, level, sort_order) VALUES

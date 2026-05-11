@@ -21,6 +21,8 @@ from .spiders.esselunga_spider import EsselungaSpider
 from .spiders.conad_spider import ConadSpider
 from .spiders.carrefour_spider import CarrefourSpider
 from .spiders.eurospin_spider import EurospinSpider
+from .spiders.iper_spider import IperSpider
+from .spiders.famila_spider import FamilaSpider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +79,26 @@ async def run_eurospin(
             await spider.run()
 
 
+async def run_iper(
+    conn: asyncpg.Connection, dry_run: bool, discover_only: bool
+) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = IperSpider(client, conn, dry_run=dry_run)
+        count = await spider.discover_stores()
+        if discover_only:
+            print(f"\n=== Negozi Iper upsert: {count} ===")
+
+
+async def run_famila(
+    conn: asyncpg.Connection, dry_run: bool, discover_only: bool
+) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = FamilaSpider(client, conn, dry_run=dry_run)
+        count = await spider.discover_stores()
+        if discover_only:
+            print(f"\n=== Negozi Famila upsert: {count} ===")
+
+
 async def main(args: argparse.Namespace) -> None:
     if not DB_URL:
         sys.exit("Errore: DATABASE_URL non impostata")
@@ -86,7 +108,7 @@ async def main(args: argparse.Namespace) -> None:
         chains = (
             [args.chain]
             if args.chain != "all"
-            else ["esselunga", "conad", "carrefour", "eurospin"]
+            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila"]
         )
 
         for chain in chains:
@@ -98,6 +120,10 @@ async def main(args: argparse.Namespace) -> None:
                 await run_carrefour(conn, args.dry_run)
             elif chain == "eurospin":
                 await run_eurospin(conn, args.dry_run, args.discover_only)
+            elif chain == "iper":
+                await run_iper(conn, args.dry_run, args.discover_only)
+            elif chain == "famila":
+                await run_famila(conn, args.dry_run, args.discover_only)
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -108,7 +134,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "all"],
+        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
