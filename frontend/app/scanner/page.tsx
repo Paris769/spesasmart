@@ -1,6 +1,9 @@
 "use client";
-import { useState, useRef } from "react";
-import { scanBarcode, parseReceipt, ReceiptResult, ReceiptItem } from "@/lib/api";
+import { useState, useRef, useEffect } from "react";
+import {
+  scanBarcode, parseReceipt, getNearbyStores, submitPrice,
+  ReceiptResult, ReceiptItem, Store, PriceSubmitResult,
+} from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import PriceCard from "@/components/ui/PriceCard";
 
@@ -115,9 +118,149 @@ function BarcodeTab({ location, radiusKm }: { location: any; radiusKm: number })
               Nessun prezzo trovato nel raggio di {radiusKm} km
             </p>
           )}
+
+          {result.product && (
+            <PriceSubmitForm
+              barcode={barcode}
+              location={location}
+              radiusKm={radiusKm}
+            />
+          )}
         </div>
       )}
     </>
+  );
+}
+
+// ── Form contribuzione prezzo ────────────────────────────────────────────────
+
+function PriceSubmitForm({
+  barcode,
+  location,
+  radiusKm,
+}: {
+  barcode: string;
+  location: any;
+  radiusKm: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [stores, setStores] = useState<Store[]>([]);
+  const [storeId, setStoreId] = useState("");
+  const [price, setPrice] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState<PriceSubmitResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open && location && stores.length === 0) {
+      getNearbyStores(location.lat, location.lng, radiusKm).then(setStores);
+    }
+  }, [open, location, radiusKm, stores.length]);
+
+  const handleSubmit = async () => {
+    if (!storeId || !price) return;
+    const parsed = parseFloat(price.replace(",", "."));
+    if (isNaN(parsed) || parsed <= 0) return setError("Inserisci un prezzo valido");
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await submitPrice(barcode, storeId, parsed);
+      setSubmitted(res);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Errore durante l'invio");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (submitted) {
+    const { comparison: c } = submitted;
+    const isBelow = c.delta_pct < -1;
+    const isAbove = c.delta_pct > 1;
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex flex-col gap-2">
+        <p className="font-semibold text-green-800">✅ Prezzo inviato — grazie!</p>
+        <p className="text-sm text-gray-700">
+          Hai segnalato <strong>€{submitted.submitted_price.toFixed(2)}</strong> —{" "}
+          <span className={isBelow ? "text-green-700 font-medium" : isAbove ? "text-red-600 font-medium" : "text-gray-600"}>
+            {c.vs_avg}
+          </span>
+        </p>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs mt-1">
+          <div className="bg-white rounded-lg p-2 border">
+            <p className="text-gray-400">Min</p>
+            <p className="font-bold text-green-700">€{c.price_min.toFixed(2)}</p>
+          </div>
+          <div className="bg-white rounded-lg p-2 border">
+            <p className="text-gray-400">Media</p>
+            <p className="font-bold text-gray-700">€{c.price_avg.toFixed(2)}</p>
+          </div>
+          <div className="bg-white rounded-lg p-2 border">
+            <p className="text-gray-400">Max</p>
+            <p className="font-bold text-red-600">€{c.price_max.toFixed(2)}</p>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 text-center">
+          Basato su {c.store_count} {c.store_count === 1 ? "negozio" : "negozi"}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-600 hover:bg-gray-50 transition"
+      >
+        <span>📍 Hai visto questo prodotto in negozio? Segnala il prezzo</span>
+        <span className="text-gray-400">{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 flex flex-col gap-3 border-t border-gray-100">
+          {stores.length === 0 ? (
+            <p className="text-sm text-gray-400 py-2">Caricamento negozi vicini…</p>
+          ) : (
+            <select
+              value={storeId}
+              onChange={(e) => setStoreId(e.target.value)}
+              className="border-2 border-gray-200 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none transition"
+            >
+              <option value="">Seleziona negozio…</option>
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.chain_name} — {s.name} ({s.distance_km} km)
+                </option>
+              ))}
+            </select>
+          )}
+
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="0,00"
+                className="w-full border-2 border-gray-200 focus:border-primary rounded-xl pl-7 pr-3 py-2 text-sm outline-none transition"
+              />
+            </div>
+            <button
+              onClick={handleSubmit}
+              disabled={!storeId || !price || loading}
+              className="bg-primary text-white px-4 rounded-xl text-sm font-medium disabled:opacity-50 transition"
+            >
+              {loading ? "…" : "Invia"}
+            </button>
+          </div>
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 

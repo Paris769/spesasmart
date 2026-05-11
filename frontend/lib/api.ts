@@ -115,6 +115,31 @@ export interface ReceiptResult {
   items_count: number;
 }
 
+export interface PriceComparison {
+  store_count: number;
+  price_min: number;
+  price_max: number;
+  price_avg: number;
+  delta_pct: number;
+  vs_avg: string;
+}
+
+export interface PriceSubmitResult {
+  saved: boolean;
+  product: { id: string; name: string; barcode: string };
+  submitted_price: number;
+  comparison: PriceComparison;
+}
+
+export const submitPrice = (
+  barcode: string,
+  storeId: string,
+  price: number
+): Promise<PriceSubmitResult> =>
+  api
+    .post<PriceSubmitResult>(`/scan/${barcode}/price`, { store_id: storeId, price })
+    .then((r) => r.data);
+
 export const parseReceipt = (file: File): Promise<ReceiptResult> => {
   const form = new FormData();
   form.append("file", file);
