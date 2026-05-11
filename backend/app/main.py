@@ -8,9 +8,10 @@ ALLOWED_ORIGINS = [
     "https://spesasmart.it",
     "https://www.spesasmart.it",
 ]
-# Aggiunge automaticamente il dominio Vercel se configurato
 if vercel := os.getenv("VERCEL_URL"):
     ALLOWED_ORIGINS.append(f"https://{vercel}")
+if frontend := os.getenv("FRONTEND_URL"):
+    ALLOWED_ORIGINS.append(frontend)
 
 app = FastAPI(
     title="SpesaSmart API",
@@ -21,6 +22,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://spesasmart[a-z0-9\-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
