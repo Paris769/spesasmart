@@ -27,8 +27,19 @@ async def search_products(
     if not q:
         raise HTTPException(status_code=400, detail="Fornire q o barcode")
 
+    q_lower = q.lower()
     filters = ["TRUE"]
-    params: dict = {"q": q, "q_like": f"%{q}%", "limit": limit, "offset": offset}
+    params: dict = {
+        "q": q,
+        "q_like": f"%{q}%",
+        "q_lower": q_lower,
+        "q_lower_start": q_lower + " %",
+        "q_lower_mid": "% " + q_lower + " %",
+        "q_lower_end": "% " + q_lower,
+        "q_tsquery": q_lower,
+        "limit": limit,
+        "offset": offset,
+    }
 
     if category_id:
         filters.append("category_id = :category_id")
@@ -38,18 +49,28 @@ async def search_products(
     result = await db.execute(
         text(f"""
             SELECT *,
-                   GREATEST(
-                       similarity(name, :q),
-                       similarity(COALESCE(brand, ''), :q)
-                   ) AS score
+                   CASE
+                       WHEN lower(name) = :q_lower                  THEN 4
+                       WHEN lower(name) LIKE :q_lower_start         THEN 3
+                       WHEN lower(name) LIKE :q_lower_mid
+                         OR lower(name) LIKE :q_lower_end           THEN 2
+                       ELSE 1
+                   END AS word_rank,
+                   ts_rank(
+                       to_tsvector('simple', lower(name)),
+                       plainto_tsquery('simple', :q_tsquery)
+                   ) AS ts_score
             FROM products
             WHERE {where} AND (
-                name % :q
-                OR brand % :q
+                to_tsvector('simple', lower(name || ' ' || COALESCE(brand, '')))
+                    @@ plainto_tsquery('simple', :q_tsquery)
                 OR name ILIKE :q_like
                 OR brand ILIKE :q_like
             )
-            ORDER BY score DESC
+            ORDER BY
+                word_rank DESC,
+                ts_score   DESC,
+                similarity(name, :q) DESC
             LIMIT :limit OFFSET :offset
         """),
         params,
