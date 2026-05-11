@@ -19,6 +19,7 @@ import httpx
 
 from .spiders.esselunga_spider import EsselungaSpider
 from .spiders.conad_spider import ConadSpider
+from .spiders.carrefour_spider import CarrefourSpider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,19 +58,27 @@ async def run_conad(conn: asyncpg.Connection, dry_run: bool) -> None:
         await spider.run()
 
 
+async def run_carrefour(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = CarrefourSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
 async def main(args: argparse.Namespace) -> None:
     if not DB_URL:
         sys.exit("Errore: DATABASE_URL non impostata")
 
     conn = await asyncpg.connect(DB_URL)
     try:
-        chains = [args.chain] if args.chain != "all" else ["esselunga", "conad"]
+        chains = [args.chain] if args.chain != "all" else ["esselunga", "conad", "carrefour"]
 
         for chain in chains:
             if chain == "esselunga":
                 await run_esselunga(conn, args.dry_run, args.discover_only)
             elif chain == "conad":
                 await run_conad(conn, args.dry_run)
+            elif chain == "carrefour":
+                await run_carrefour(conn, args.dry_run)
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -80,7 +89,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "all"],
+        choices=["esselunga", "conad", "carrefour", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
