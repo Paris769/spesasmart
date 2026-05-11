@@ -34,7 +34,7 @@ CREATE TABLE stores (
     name                VARCHAR(200),
     address             TEXT,
     city                VARCHAR(100),
-    province            CHAR(2),
+    province            VARCHAR(50),
     postal_code         VARCHAR(10),
     coordinates         GEOMETRY(Point, 4326) NOT NULL,
     phone               VARCHAR(20),
