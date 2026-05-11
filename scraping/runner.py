@@ -4,6 +4,7 @@ SpesaSmart scraper runner.
 Uso:
     python -m scraping.runner                   # tutti i chain
     python -m scraping.runner --chain esselunga
+    python -m scraping.runner --chain conad
     python -m scraping.runner --chain esselunga --dry-run
     python -m scraping.runner --chain esselunga --discover-only
 """
@@ -17,6 +18,7 @@ import asyncpg
 import httpx
 
 from .spiders.esselunga_spider import EsselungaSpider
+from .spiders.conad_spider import ConadSpider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,17 +51,25 @@ async def run_esselunga(conn: asyncpg.Connection, dry_run: bool, discover_only: 
         await spider.run()
 
 
+async def run_conad(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = ConadSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
 async def main(args: argparse.Namespace) -> None:
     if not DB_URL:
         sys.exit("Errore: DATABASE_URL non impostata")
 
     conn = await asyncpg.connect(DB_URL)
     try:
-        chains = [args.chain] if args.chain != "all" else ["esselunga"]
+        chains = [args.chain] if args.chain != "all" else ["esselunga", "conad"]
 
         for chain in chains:
             if chain == "esselunga":
                 await run_esselunga(conn, args.dry_run, args.discover_only)
+            elif chain == "conad":
+                await run_conad(conn, args.dry_run)
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -70,7 +80,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "all"],
+        choices=["esselunga", "conad", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
