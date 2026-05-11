@@ -28,7 +28,7 @@ async def search_products(
         raise HTTPException(status_code=400, detail="Fornire q o barcode")
 
     filters = ["TRUE"]
-    params: dict = {"q": q, "limit": limit, "offset": offset}
+    params: dict = {"q": q, "q_like": f"%{q}%", "limit": limit, "offset": offset}
 
     if category_id:
         filters.append("category_id = :category_id")
@@ -37,9 +37,18 @@ async def search_products(
     where = " AND ".join(filters)
     result = await db.execute(
         text(f"""
-            SELECT *, similarity(name, :q) AS score
+            SELECT *,
+                   GREATEST(
+                       similarity(name, :q),
+                       similarity(COALESCE(brand, ''), :q)
+                   ) AS score
             FROM products
-            WHERE {where} AND name % :q
+            WHERE {where} AND (
+                name % :q
+                OR brand % :q
+                OR name ILIKE :q_like
+                OR brand ILIKE :q_like
+            )
             ORDER BY score DESC
             LIMIT :limit OFFSET :offset
         """),
@@ -97,7 +106,7 @@ async def get_price_history(
     days: int = Query(90, ge=7, le=365),
     db: AsyncSession = Depends(get_db),
 ):
-    filters = ["product_id = :product_id", "scraped_at > NOW() - INTERVAL ':days days'"]
+    filters = ["product_id = :product_id", "scraped_at > NOW() - make_interval(days => :days)"]
     params: dict = {"product_id": product_id, "days": days}
 
     if store_id:
