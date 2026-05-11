@@ -91,17 +91,19 @@ class FamilaSpider:
             log.error("Root sitemap unreachable")
             return []
 
-        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         try:
             root = ElementTree.fromstring(root_xml)
         except ElementTree.ParseError as e:
             log.error("Root sitemap parse error: %s", e)
             return []
 
-        # Root is a <sitemapindex>; collect child sitemap URLs
+        # Root is a <sitemapindex>; collect child sitemap URLs.
+        # Use {*}loc (namespace-agnostic) because famila partner sitemaps use a
+        # custom namespace (https://www.famila.it/schemas/sitemap/0.9) instead of
+        # the standard one, which breaks namespace-prefix lookups.
         child_sitemaps = [
             loc.text
-            for loc in root.findall(".//sm:loc", ns)
+            for loc in root.findall(".//{*}loc")
             if loc.text and "/sitemap.xml" in loc.text
         ]
         log.info("Root sitemap → %d partner sitemaps", len(child_sitemaps))
@@ -115,7 +117,7 @@ class FamilaSpider:
                 tree = ElementTree.fromstring(xml_text)
             except ElementTree.ParseError:
                 continue
-            for loc in tree.findall(".//sm:loc", ns):
+            for loc in tree.findall(".//{*}loc"):
                 url = loc.text or ""
                 path = url.replace(BASE_URL, "")
                 parts = [p for p in path.split("/") if p]
