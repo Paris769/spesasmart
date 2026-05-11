@@ -115,6 +115,26 @@ class CarrefourSpider:
             await asyncio.sleep(2**attempt)
         return None
 
+    async def _get_json(self, url: str, params: dict) -> dict | None:
+        """Variante di _get che parsa la risposta come JSON (endpoint Search-ShowAjax)."""
+        await self._throttle()
+        for attempt in range(3):
+            try:
+                r = await self.client.get(
+                    url, params=params, headers=HEADERS, timeout=30
+                )
+                if r.status_code == 200:
+                    return r.json()
+                log.warning(
+                    "HTTP %s %s tentativo %d", r.status_code, url[:70], attempt + 1
+                )
+                if r.status_code in (403, 404):
+                    return None
+            except (httpx.RequestError, Exception) as exc:
+                log.warning("Tentativo %d errore: %s", attempt + 1, exc)
+            await asyncio.sleep(2**attempt)
+        return None
+
     # ------------------------------------------------------------------
     # Store management
     # ------------------------------------------------------------------
@@ -189,6 +209,48 @@ class CarrefourSpider:
             return float(m.group(1).replace(",", "."))
         except ValueError:
             return None
+
+    @staticmethod
+    def _parse_ajax_products(data: dict) -> list[dict]:
+        """
+        Parsa i prodotti dalla risposta JSON di Search-ShowAjax.
+        La struttura è: { "productIds": [ { id, productName, brand, price, unitPrice, ... } ] }
+        """
+        products = []
+        for p in data.get("productIds") or []:
+            pid = str(p.get("id") or "").strip()
+            name = (p.get("productName") or "").strip()
+            if not pid or not name:
+                continue
+
+            sales_obj = (p.get("price") or {}).get("sales") or {}
+            sales_price = sales_obj.get("value")
+            if not sales_price:
+                continue
+
+            list_obj = (p.get("price") or {}).get("list") or {}
+            orig_price = list_obj.get("value") or None
+
+            unit_sales = (p.get("unitPrice") or {}).get("sales") or {}
+            price_per_unit = unit_sales.get("value") or None
+
+            # Etichetta promo dal primo elemento di promotions (se presente)
+            promos = p.get("promotions") or []
+            promo_label = (promos[0].get("calloutMsg") or promos[0].get("name")) if promos else None
+
+            products.append(
+                {
+                    "pid": pid,
+                    "name": name,
+                    "brand": p.get("brand") or None,
+                    "price": float(sales_price),
+                    "original_price": float(orig_price) if orig_price else None,
+                    "price_per_unit": float(price_per_unit) if price_per_unit else None,
+                    "image_url": None,  # non presente nel JSON AJAX
+                    "promo_label": promo_label,
+                }
+            )
+        return products
 
     def _parse_products(self, html: str) -> list[dict]:
         """Parsa tutti i product-item dall'HTML di una pagina/fragment."""
@@ -361,19 +423,18 @@ class CarrefourSpider:
         grand_total = 0
         for page_num in range(total_pages):
             if page_num == 0:
-                html = first_html
+                products = self._parse_products(first_html)
             else:
-                html = await self._get(
+                ajax_data = await self._get_json(
                     AJAX_URL,
                     params={"cgid": cgid, "start": page_num * PAGE_SIZE, "sz": PAGE_SIZE},
                 )
-                if not html:
+                if not ajax_data:
                     log.warning(
                         "Pagina %d non ottenuta per %s, salto", page_num + 1, slug
                     )
                     continue
-
-            products = self._parse_products(html)
+                products = self._parse_ajax_products(ajax_data)
             page_count = 0
             for prod in products:
                 try:
