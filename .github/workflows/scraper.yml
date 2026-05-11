@@ -11,7 +11,7 @@ on:
         required: false
         default: "all"
         type: choice
-        options: [all, esselunga, conad, carrefour]
+        options: [all, esselunga, conad, carrefour, eurospin]
       dry_run:
         description: "Dry run (non scrive nel DB)"
         required: false
