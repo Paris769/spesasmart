@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import { useAppStore } from "@/lib/store";
 
 const RADII = [1, 3, 5, 10, 20];
@@ -6,8 +7,11 @@ const RADII = [1, 3, 5, 10, 20];
 export default function LocationBar() {
   const { location, radiusKm, setLocation, setRadius } = useAppStore();
 
-  const detectLocation = () => {
-    if (!navigator.geolocation) return alert("Geolocalizzazione non supportata");
+  const detectLocation = (silent = false) => {
+    if (!navigator.geolocation) {
+      if (!silent) alert("Geolocalizzazione non supportata");
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) =>
         setLocation({
@@ -15,9 +19,23 @@ export default function LocationBar() {
           lng: pos.coords.longitude,
           label: "Posizione attuale",
         }),
-      () => alert("Impossibile rilevare la posizione")
+      (err) => {
+        console.warn("Geolocalizzazione fallita:", err.message);
+        if (!silent) alert("Impossibile rilevare la posizione");
+      },
+      { timeout: 10000, maximumAge: 60000 }
     );
   };
+
+  // Auto-detect on mount when: location is null (first visit) OR
+  // the stored location was previously auto-detected (label === "Posizione attuale")
+  // so stale GPS coordinates get refreshed automatically.
+  useEffect(() => {
+    if (!location || location.label === "Posizione attuale") {
+      detectLocation(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="flex flex-wrap items-center gap-2 bg-white border rounded-xl p-3 shadow-sm">
