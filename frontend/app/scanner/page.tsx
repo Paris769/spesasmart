@@ -1,20 +1,55 @@
 "use client";
 import { useState, useRef } from "react";
-import { scanBarcode } from "@/lib/api";
+import { scanBarcode, parseReceipt, ReceiptResult, ReceiptItem } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import PriceCard from "@/components/ui/PriceCard";
 
+type Tab = "barcode" | "scontrino";
+
 export default function ScannerPage() {
-  const [manualBarcode, setManualBarcode] = useState("");
-  const [result, setResult] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<Tab>("barcode");
   const { location, radiusKm } = useAppStore();
 
-  const doScan = async (barcode: string) => {
+  return (
+    <div className="flex flex-col gap-4">
+      <h1 className="text-xl font-bold text-gray-800">Scanner</h1>
+
+      {/* Tab switcher */}
+      <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+        {(["barcode", "scontrino"] as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+              tab === t ? "bg-white shadow text-primary" : "text-gray-500"
+            }`}
+          >
+            {t === "barcode" ? "📷 Barcode" : "🧾 Scontrino"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "barcode" ? (
+        <BarcodeTab location={location} radiusKm={radiusKm} />
+      ) : (
+        <ScontrinoTab />
+      )}
+    </div>
+  );
+}
+
+// ── Tab Barcode ──────────────────────────────────────────────────────────────
+
+function BarcodeTab({ location, radiusKm }: { location: any; radiusKm: number }) {
+  const [barcode, setBarcode] = useState("");
+  const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const doScan = async (bc: string) => {
     if (!location) return alert("Attiva prima la posizione");
     setLoading(true);
     try {
-      const data = await scanBarcode(barcode, location.lat, location.lng, radiusKm);
+      const data = await scanBarcode(bc, location.lat, location.lng, radiusKm);
       setResult(data);
     } finally {
       setLoading(false);
@@ -22,30 +57,26 @@ export default function ScannerPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-bold text-gray-800">Scanner barcode</h1>
-
+    <>
       <div className="bg-white border-2 border-dashed border-gray-300 rounded-xl p-8 text-center">
         <p className="text-4xl mb-2">📷</p>
-        <p className="text-sm text-gray-500 mb-4">
+        <p className="text-sm text-gray-500 mb-1">
           Inquadra il barcode con la fotocamera oppure inseriscilo manualmente
         </p>
-        <p className="text-xs text-gray-400">
-          (La fotocamera nativa è disponibile nell'app mobile)
-        </p>
+        <p className="text-xs text-gray-400">(Fotocamera nativa disponibile nell'app mobile)</p>
       </div>
 
       <div className="flex gap-2">
         <input
-          value={manualBarcode}
-          onChange={(e) => setManualBarcode(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && manualBarcode && doScan(manualBarcode)}
+          value={barcode}
+          onChange={(e) => setBarcode(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && barcode && doScan(barcode)}
           placeholder="Inserisci barcode manualmente…"
           className="flex-1 border-2 border-gray-200 focus:border-primary rounded-xl px-4 py-2 outline-none transition"
         />
         <button
-          onClick={() => doScan(manualBarcode)}
-          disabled={!manualBarcode || loading}
+          onClick={() => doScan(barcode)}
+          disabled={!barcode || loading}
           className="bg-primary text-white px-4 rounded-xl font-medium disabled:opacity-50"
         >
           Cerca
@@ -59,24 +90,16 @@ export default function ScannerPage() {
           {result.product && (
             <div className="flex items-center gap-3 bg-white border rounded-xl p-4">
               {result.product.image_url && (
-                <img
-                  src={result.product.image_url}
-                  alt={result.product.name}
-                  className="w-16 h-16 object-contain rounded"
-                />
+                <img src={result.product.image_url} alt={result.product.name}
+                  className="w-16 h-16 object-contain rounded" />
               )}
               <div>
                 <p className="font-bold text-gray-900">{result.product.name}</p>
-                {result.product.brand && (
-                  <p className="text-sm text-gray-500">{result.product.brand}</p>
-                )}
-                {result.message && (
-                  <p className="text-xs text-amber-600 mt-1">{result.message}</p>
-                )}
+                {result.product.brand && <p className="text-sm text-gray-500">{result.product.brand}</p>}
+                {result.message && <p className="text-xs text-amber-600 mt-1">{result.message}</p>}
               </div>
             </div>
           )}
-
           {result.prices?.length > 0 && (
             <>
               <p className="text-sm text-gray-600">
@@ -87,7 +110,6 @@ export default function ScannerPage() {
               ))}
             </>
           )}
-
           {result.prices?.length === 0 && (
             <p className="text-center text-gray-500 py-4">
               Nessun prezzo trovato nel raggio di {radiusKm} km
@@ -95,6 +117,177 @@ export default function ScannerPage() {
           )}
         </div>
       )}
+    </>
+  );
+}
+
+// ── Tab Scontrino ────────────────────────────────────────────────────────────
+
+function ScontrinoTab() {
+  const [result, setResult] = useState<ReceiptResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    setError(null);
+    setResult(null);
+    if (file.type.startsWith("image/")) {
+      setPreview(URL.createObjectURL(file));
+    } else {
+      setPreview(null);
+    }
+    setLoading(true);
+    try {
+      const data = await parseReceipt(file);
+      setResult(data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Errore durante l'analisi dello scontrino");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  return (
+    <>
+      {/* Drop zone */}
+      <div
+        onDrop={onDrop}
+        onDragOver={(e) => e.preventDefault()}
+        onClick={() => inputRef.current?.click()}
+        className="bg-white border-2 border-dashed border-green-300 rounded-xl p-8 text-center cursor-pointer hover:border-primary transition"
+      >
+        {preview ? (
+          <img src={preview} alt="scontrino" className="max-h-48 mx-auto rounded-lg object-contain" />
+        ) : (
+          <>
+            <p className="text-4xl mb-2">🧾</p>
+            <p className="text-sm text-gray-600 font-medium mb-1">
+              Carica una foto dello scontrino
+            </p>
+            <p className="text-xs text-gray-400">
+              JPEG, PNG, WEBP o PDF · max 10 MB · trascina o clicca
+            </p>
+          </>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        className="hidden"
+        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+      />
+
+      {loading && (
+        <div className="flex flex-col items-center gap-2 py-6">
+          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">Analisi con AI in corso…</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {result && <ReceiptView result={result} />}
+    </>
+  );
+}
+
+// ── Visualizzazione risultato scontrino ───────────────────────────────────────
+
+function ReceiptView({ result }: { result: ReceiptResult }) {
+  const formatPrice = (n: number | null) =>
+    n != null ? `€${n.toFixed(2)}` : "—";
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Header store info */}
+      <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🏪</span>
+          <div>
+            <p className="font-bold text-gray-900">
+              {result.store_name || "Negozio non identificato"}
+            </p>
+            {result.store_chain && (
+              <p className="text-sm text-green-700 font-medium">{result.store_chain}</p>
+            )}
+            {result.store_address && (
+              <p className="text-xs text-gray-500">{result.store_address}</p>
+            )}
+            <div className="flex gap-4 mt-1">
+              {result.purchase_date && (
+                <p className="text-xs text-gray-500">
+                  📅 {new Date(result.purchase_date).toLocaleDateString("it-IT")}
+                </p>
+              )}
+              {result.total_amount != null && (
+                <p className="text-xs font-semibold text-gray-700">
+                  Totale: {formatPrice(result.total_amount)}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Items */}
+      <p className="text-sm text-gray-600">
+        <strong>{result.items_count}</strong> articoli rilevati
+      </p>
+
+      <div className="flex flex-col gap-2">
+        {result.items.map((item, i) => (
+          <ReceiptItemRow key={i} item={item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReceiptItemRow({ item }: { item: ReceiptItem }) {
+  const formatPrice = (n: number | null) =>
+    n != null ? `€${n.toFixed(2)}` : "—";
+
+  return (
+    <div className="bg-white border rounded-xl p-3 flex items-center gap-3">
+      {/* Immagine prodotto se abbinato */}
+      {item.matched_product?.image_url ? (
+        <img
+          src={item.matched_product.image_url}
+          alt={item.name}
+          className="w-12 h-12 object-contain rounded flex-shrink-0"
+        />
+      ) : (
+        <div className="w-12 h-12 bg-gray-100 rounded flex items-center justify-center flex-shrink-0">
+          <span className="text-xl">🛒</span>
+        </div>
+      )}
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+        {item.matched_product && (
+          <p className="text-xs text-green-600">✓ {item.matched_product.name}</p>
+        )}
+        {item.quantity > 1 && (
+          <p className="text-xs text-gray-400">{item.quantity}x {formatPrice(item.unit_price)}</p>
+        )}
+      </div>
+
+      <p className="text-sm font-bold text-gray-900 flex-shrink-0">
+        {formatPrice(item.total_price ?? item.unit_price)}
+      </p>
     </div>
   );
 }

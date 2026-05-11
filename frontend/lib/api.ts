@@ -95,3 +95,32 @@ export const optimizeList = (
   api
     .post(`/lists/${listId}/optimize`, { lat, lng, radius_km: radiusKm })
     .then((r) => r.data);
+
+export interface ReceiptItem {
+  name: string;
+  quantity: number;
+  unit_price: number | null;
+  total_price: number | null;
+  is_discount: boolean;
+  matched_product: Product | null;
+}
+
+export interface ReceiptResult {
+  store_name: string | null;
+  store_address: string | null;
+  store_chain: string | null;
+  purchase_date: string | null;
+  total_amount: number | null;
+  items: ReceiptItem[];
+  items_count: number;
+}
+
+export const parseReceipt = (file: File): Promise<ReceiptResult> => {
+  const form = new FormData();
+  form.append("file", file);
+  return api
+    .post<ReceiptResult>("/receipts/parse", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
+    .then((r) => r.data);
+};
