@@ -51,7 +51,7 @@ async def scan_barcode(
     prices_res = await db.execute(
         text("""
             SELECT
-                p.price, p.original_price, p.promo_label, p.in_stock,
+                p.price, p.original_price, p.promo_label, p.in_stock, p.scraped_at,
                 s.id AS store_id, s.name AS store_name, s.address,
                 s.has_delivery, s.has_click_collect,
                 c.name AS chain_name, c.slug AS chain_slug, c.shop_url,

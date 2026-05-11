@@ -23,6 +23,7 @@ export default function PriceCard({ result, rank }: Props) {
       : null;
 
   const freshness = (() => {
+    if (!result.scraped_at) return null;
     const diff = Date.now() - new Date(result.scraped_at).getTime();
     const h = Math.floor(diff / 3600000);
     return h < 1 ? "Aggiornato ora" : `${h}h fa`;
@@ -96,7 +97,7 @@ export default function PriceCard({ result, rank }: Props) {
             Acquista →
           </a>
         )}
-        <span className="text-xs text-gray-400 ml-auto">{freshness}</span>
+        {freshness && <span className="text-xs text-gray-400 ml-auto">{freshness}</span>}
       </div>
     </div>
   );
