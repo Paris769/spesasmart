@@ -23,7 +23,7 @@ from .spiders.carrefour_spider import CarrefourSpider
 from .spiders.eurospin_spider import EurospinSpider
 from .spiders.iper_spider import IperSpider
 from .spiders.famila_spider import FamilaSpider
-from .spiders.cosicomodo_spider import CosìComodoSpider
+from .spiders.cosicomodo_spider import CosiComodoSpider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,7 +125,7 @@ async def run_famila(
             print(f"\n=== Negozi Famila upsert: {count} ===")
         else:
             # Dopo la discovery, scrapa anche i prezzi via CosìComodo
-            price_spider = CosìComodoSpider(client, conn, dry_run=dry_run)
+            price_spider = CosiComodoSpider(client, conn, dry_run=dry_run)
             await price_spider.scrape_prices()
 
 
@@ -158,7 +158,7 @@ async def main(args: argparse.Namespace) -> None:
             elif chain == "cosicomodo":
                 # Scrapa solo i prezzi CosìComodo (senza ri-discovery negozi Famila)
                 async with httpx.AsyncClient() as client:
-                    spider = CosìComodoSpider(client, conn, dry_run=args.dry_run)
+                    spider = CosiComodoSpider(client, conn, dry_run=args.dry_run)
                     await spider.scrape_prices()
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)

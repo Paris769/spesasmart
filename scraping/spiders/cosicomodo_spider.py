@@ -1,5 +1,5 @@
 """
-CosìComodoSpider — prezzi Famila (Nord, Nord-Est, Sud, Adriatica) via OCC API.
+CosiComodoSpider — prezzi Famila (Nord, Nord-Est, Sud, Adriatica) via OCC API.
 
 Flusso:
   1. Legge tutti i negozi Famila dal DB (chain slug = 'famila').
@@ -89,7 +89,7 @@ def _city_to_alias(city: str) -> str:
     return slug
 
 
-class CosìComodoSpider:
+class CosiComodoSpider:
     def __init__(
         self,
         client: httpx.AsyncClient,
