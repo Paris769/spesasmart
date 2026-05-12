@@ -40,7 +40,7 @@ export default function LocationBar() {
   return (
     <div className="flex flex-wrap items-center gap-2 bg-white border rounded-xl p-3 shadow-sm">
       <button
-        onClick={detectLocation}
+        onClick={() => detectLocation()}
         className="flex items-center gap-1 text-sm bg-primary text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition"
       >
         📍 {location ? location.label : "Usa la mia posizione"}
