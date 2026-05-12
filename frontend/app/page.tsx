@@ -53,24 +53,29 @@ export default function HomePage() {
 
       {/* Suggerimenti prodotti */}
       {!selectedProduct && products && products.length > 0 && (
-        <ul className="bg-white border rounded-xl shadow-sm divide-y overflow-hidden">
-          {products.slice(0, 8).map((p) => (
-            <li key={p.id}>
-              <button
-                onClick={() => { setSelectedProduct(p); setQuery(p.name); }}
-                className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3"
-              >
-                {p.image_url && (
-                  <img src={p.image_url} alt={p.name} className="w-10 h-10 object-contain rounded" />
-                )}
-                <div>
-                  <p className="font-medium text-gray-900 text-sm">{p.name}</p>
-                  {p.brand && <p className="text-xs text-gray-500">{p.brand}</p>}
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div>
+          <p className="text-xs text-gray-400 mb-1 px-1">
+            {products.length} prodotti trovati — seleziona per vedere i prezzi vicino a te
+          </p>
+          <ul className="bg-white border rounded-xl shadow-sm divide-y overflow-y-auto max-h-[60vh]">
+            {products.map((p) => (
+              <li key={p.id}>
+                <button
+                  onClick={() => { setSelectedProduct(p); setQuery(p.name); }}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3"
+                >
+                  {p.image_url && (
+                    <img src={p.image_url} alt={p.name} className="w-10 h-10 object-contain rounded shrink-0" />
+                  )}
+                  <div>
+                    <p className="font-medium text-gray-900 text-sm">{p.name}</p>
+                    {p.brand && <p className="text-xs text-gray-500">{p.brand}</p>}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {/* Risultati prezzi */}

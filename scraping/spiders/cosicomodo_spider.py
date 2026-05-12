@@ -30,8 +30,9 @@ log = logging.getLogger("cosicomodo")
 API_BASE = "https://api.cosicomodo.it/occ/v2"
 CHAIN_SLUG = "famila"
 PAGE_SIZE = 100
-RATE = 1.2          # secondi tra richieste (stessa origine)
+RATE = 0.4          # secondi tra richieste (l'API pubblica non throttla aggressivamente)
 PROBE_TIMEOUT = 8   # secondi per il probe del baseSiteId
+CAT_CONCURRENCY = 3 # categorie in parallelo per negozio
 
 # Tutti i baseSiteId presenti su cosicomodo.it (da sitemap.xml)
 BASE_SITE_IDS = [
@@ -382,11 +383,25 @@ class CosiComodoSpider:
 
             log.info("=== %s (%s/%s) ===", store_name, bsid, alias)
             store_total = 0
-            for cat_code in CATEGORY_CODES:
-                n = await self._scrape_category(bsid, alias, cat_code, store_uuid)
-                if n > 0:
-                    log.info("  cat %s → %d prodotti", cat_code, n)
-                store_total += n
+            # Scrapa le categorie in batch concorrenti (CAT_CONCURRENCY alla volta)
+            sem = asyncio.Semaphore(CAT_CONCURRENCY)
+
+            async def _scrape_cat_guarded(code: str) -> int:
+                async with sem:
+                    return await self._scrape_category(bsid, alias, code, store_uuid)
+
+            results = await asyncio.gather(
+                *[_scrape_cat_guarded(code) for code in CATEGORY_CODES],
+                return_exceptions=True,
+            )
+            for code, res in zip(CATEGORY_CODES, results):
+                if isinstance(res, Exception):
+                    log.warning("  cat %s errore: %s", code, res)
+                elif res > 0:
+                    log.info("  cat %s → %d prodotti", code, res)
+                    store_total += res
+                elif res == 0:
+                    store_total += 0
 
             log.info("  Totale negozio: %d prezzi", store_total)
             total_upserted += store_total
