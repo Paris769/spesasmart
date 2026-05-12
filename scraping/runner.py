@@ -23,6 +23,7 @@ from .spiders.carrefour_spider import CarrefourSpider
 from .spiders.eurospin_spider import EurospinSpider
 from .spiders.iper_spider import IperSpider
 from .spiders.famila_spider import FamilaSpider
+from .spiders.cosicomodo_spider import CosìComodoSpider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,7 +47,7 @@ _CHAINS_SEED = [
     ("Pam",       "pam",       True,  "https://www.pampanorama.it/spesa-online",                "redirect"),
     ("MD",        "md",        False, None,                                                      "none"),
     ("Iper",      "iper",      False, None,                                                      "none"),
-    ("Famila",    "famila",    False, None,                                                      "none"),
+    ("Famila",    "famila",    True,  "https://www.cosicomodo.it/famila",                       "api"),
 ]
 
 
@@ -122,6 +123,10 @@ async def run_famila(
         count = await spider.discover_stores()
         if discover_only:
             print(f"\n=== Negozi Famila upsert: {count} ===")
+        else:
+            # Dopo la discovery, scrapa anche i prezzi via CosìComodo
+            price_spider = CosìComodoSpider(client, conn, dry_run=dry_run)
+            await price_spider.scrape_prices()
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -134,7 +139,7 @@ async def main(args: argparse.Namespace) -> None:
         chains = (
             [args.chain]
             if args.chain != "all"
-            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila"]
+            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo"]
         )
 
         for chain in chains:
@@ -150,6 +155,11 @@ async def main(args: argparse.Namespace) -> None:
                 await run_iper(conn, args.dry_run, args.discover_only)
             elif chain == "famila":
                 await run_famila(conn, args.dry_run, args.discover_only)
+            elif chain == "cosicomodo":
+                # Scrapa solo i prezzi CosìComodo (senza ri-discovery negozi Famila)
+                async with httpx.AsyncClient() as client:
+                    spider = CosìComodoSpider(client, conn, dry_run=args.dry_run)
+                    await spider.scrape_prices()
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -160,7 +170,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "all"],
+        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
