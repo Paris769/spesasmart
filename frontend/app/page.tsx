@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchProducts, getProductPrices, Product } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
@@ -8,13 +8,21 @@ import PriceCard from "@/components/ui/PriceCard";
 
 export default function HomePage() {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const { location, radiusKm } = useAppStore();
 
+  // Debounce: aspetta 350ms dopo l'ultima digitazione prima di cercare
+  useEffect(() => {
+    if (selectedProduct) return;
+    const t = setTimeout(() => setDebouncedQuery(query), 350);
+    return () => clearTimeout(t);
+  }, [query, selectedProduct]);
+
   const { data: products, isFetching: searching } = useQuery({
-    queryKey: ["search", query],
-    queryFn: () => searchProducts(query),
-    enabled: query.length >= 2 && !selectedProduct,
+    queryKey: ["search", debouncedQuery],
+    queryFn: () => searchProducts(debouncedQuery),
+    enabled: debouncedQuery.length >= 2 && !selectedProduct,
     staleTime: 30_000,
   });
 

@@ -63,7 +63,7 @@ export interface PriceResult {
 
 export const searchProducts = (q: string) =>
   api
-    .get<Product[]>("/products/search", { params: { q, limit: 50 } })
+    .get<Product[]>("/products/search", { params: { q, limit: 100 } })
     .then((r) => r.data);
 
 export const getProductPrices = (
