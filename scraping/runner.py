@@ -36,29 +36,68 @@ DB_URL = (
     .replace("postgresql+asyncpg://", "postgresql://")
 )
 
-# Chains that must exist in the DB. Inserted on first run if missing.
+# Scope: SpesaSmart confronta solo prezzi reali estratti da siti di spesa
+# online + click & collect. Inseriamo nel DB esclusivamente catene che
+# offrono almeno uno dei due servizi al consumatore.
+#
+# Una catena "fisica pura" (Lidl, Eurospin, MD oggi) sta in `_INACTIVE_CHAINS`:
+# se è già stata inserita in passato la disattiviamo (is_active=FALSE,
+# has_online_shop=FALSE), preservando però lo storico prezzi/negozi per
+# eventuale futura riattivazione.
 _CHAINS_SEED = [
-    ("Esselunga", "esselunga", True,  "https://www.esselunga.it/area-utente/spesa/home.html", "redirect"),
-    ("Conad",     "conad",     True,  "https://www.conad.it/conad/home.html",                  "redirect"),
-    ("Carrefour", "carrefour", True,  "https://www.carrefour.it/spesa-online/",                 "redirect"),
-    ("Coop",      "coop",      True,  "https://www.cooponline.it",                              "redirect"),
-    ("Lidl",      "lidl",      False, None,                                                      "none"),
-    ("Eurospin",  "eurospin",  False, None,                                                      "none"),
-    ("Pam",       "pam",       True,  "https://www.pampanorama.it/spesa-online",                "redirect"),
-    ("MD",        "md",        False, None,                                                      "none"),
-    ("Iper",      "iper",      False, None,                                                      "none"),
-    ("Famila",    "famila",    True,  "https://www.cosicomodo.it/famila",                       "api"),
+    # (name, slug, has_online_shop, shop_url, integration_type)
+    ("Esselunga",   "esselunga",   True, "https://www.esselunga.it/area-utente/spesa/home.html",   "redirect"),
+    ("Conad",       "conad",       True, "https://www.conad.it/conad/home.html",                    "redirect"),
+    ("Carrefour",   "carrefour",   True, "https://www.carrefour.it/spesa-online/",                   "redirect"),
+    ("Coop",        "coop",        True, "https://www.cooponline.it",                                "redirect"),
+    ("Pam",         "pam",         True, "https://www.pampanorama.it/spesa-online",                 "redirect"),
+    ("Famila",      "famila",      True, "https://www.cosicomodo.it/famila",                        "api"),
+    # IperDrive è la spesa online del gruppo Finiper Iper (EBSN / Digitelematica)
+    ("Iper",        "iper",        True, "https://www.iperdrive.it/",                                "api"),
+    # U2 Supermercato (gruppo Finiper Unes) — stessa piattaforma EBSN di IperDrive
+    ("U2",          "u2",          True, "https://www.u2supermercato.it/spesa-online",              "api"),
+    # Catene online-only / regionali da scrappare via scraper-builder
+    ("Crai",        "crai",        True, "https://www.craispesaonline.it/",                          "redirect"),
+    ("Bennet",      "bennet",      True, "https://www.bennet.com/spesa-online",                     "redirect"),
+    ("Tigros",      "tigros",      True, "https://spesaonline.tigros.it/",                           "redirect"),
+    ("Il Gigante",  "il-gigante",  True, "https://www.ilgigante.net/spesa-online",                  "redirect"),
 ]
+
+# Catene fisiche pure (no spesa online, no click & collect consumer).
+# Se sono già in DB le marchiamo inattive ma non le cancelliamo, così
+# preserviamo lo storico per eventuali futuri lanci di servizi online.
+_INACTIVE_CHAINS = ["lidl", "eurospin", "md"]
 
 
 async def ensure_chains(conn: asyncpg.Connection) -> None:
-    """Insert any missing chains so spiders can always find their chain_id."""
+    """Sincronizza le catene nel DB con lo scope corrente.
+
+    - UPSERT delle catene attive: aggiorna shop_url / has_online_shop / integration
+      se cambiate (così rigirare lo script ripristina la verità dichiarata qui).
+    - Disattiva le catene fisiche pure: is_active=FALSE, has_online_shop=FALSE.
+      I negozi e i prezzi storici restano in DB; le query del backend filtrano
+      su has_online_shop=TRUE quindi non appariranno all'utente.
+    """
     for name, slug, has_shop, shop_url, integration in _CHAINS_SEED:
         await conn.execute(
             """INSERT INTO chains (name, slug, has_online_shop, shop_url, integration_type, is_active)
                VALUES ($1, $2, $3, $4, $5, TRUE)
-               ON CONFLICT (slug) DO NOTHING""",
+               ON CONFLICT (slug) DO UPDATE SET
+                   name             = EXCLUDED.name,
+                   has_online_shop  = EXCLUDED.has_online_shop,
+                   shop_url         = EXCLUDED.shop_url,
+                   integration_type = EXCLUDED.integration_type,
+                   is_active        = TRUE""",
             name, slug, has_shop, shop_url, integration,
+        )
+
+    if _INACTIVE_CHAINS:
+        await conn.execute(
+            """UPDATE chains
+                  SET is_active = FALSE,
+                      has_online_shop = FALSE
+                WHERE slug = ANY($1::text[])""",
+            _INACTIVE_CHAINS,
         )
 
 
@@ -136,10 +175,14 @@ async def main(args: argparse.Namespace) -> None:
     conn = await asyncpg.connect(DB_URL)
     try:
         await ensure_chains(conn)
+        # Lista delle chain attivabili da "--chain all".
+        # Solo catene con spider implementato E spesa online attiva.
+        # Le nuove (crai, bennet, tigros, il-gigante, u2) entreranno qui appena
+        # i rispettivi spider sono pronti — vedi agente scraper-builder.
         chains = (
             [args.chain]
             if args.chain != "all"
-            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo"]
+            else ["esselunga", "conad", "carrefour", "iper", "famila", "cosicomodo"]
         )
 
         for chain in chains:
@@ -149,8 +192,6 @@ async def main(args: argparse.Namespace) -> None:
                 await run_conad(conn, args.dry_run)
             elif chain == "carrefour":
                 await run_carrefour(conn, args.dry_run)
-            elif chain == "eurospin":
-                await run_eurospin(conn, args.dry_run, args.discover_only)
             elif chain == "iper":
                 await run_iper(conn, args.dry_run, args.discover_only)
             elif chain == "famila":
@@ -160,6 +201,11 @@ async def main(args: argparse.Namespace) -> None:
                 async with httpx.AsyncClient() as client:
                     spider = CosiComodoSpider(client, conn, dry_run=args.dry_run)
                     await spider.scrape_prices()
+            elif chain in {"lidl", "eurospin", "md"}:
+                logging.warning(
+                    "Chain '%s' fuori scope (nessuna spesa online consumer) — skip",
+                    chain,
+                )
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -170,7 +216,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "all"],
+        choices=["esselunga", "conad", "carrefour", "iper", "famila", "cosicomodo", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
