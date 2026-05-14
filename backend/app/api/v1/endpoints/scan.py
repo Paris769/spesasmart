@@ -101,8 +101,10 @@ async def scan_barcode(
             JOIN stores s ON p.store_id  = s.id
             JOIN chains c ON s.chain_id  = c.id
             WHERE p.product_id = :pid
-              AND p.is_current  = TRUE
-              AND s.is_active   = TRUE
+              AND p.is_current      = TRUE
+              AND s.is_active       = TRUE
+              AND c.is_active       = TRUE
+              AND c.has_online_shop = TRUE   -- scope: solo catene con spesa online
               AND ST_DWithin(
                     s.coordinates::geography,
                     ST_Point(:lng, :lat)::geography,
