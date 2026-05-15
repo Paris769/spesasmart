@@ -17,7 +17,15 @@ async def get_nearby_stores(
     has_click_collect: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    filters = ["s.is_active = TRUE"]
+    # Scope SpesaSmart: mostriamo solo catene con spesa online attiva.
+    # Le catene "fisiche pure" (Lidl, Eurospin, MD oggi) restano nel DB ma
+    # non vengono mai presentate all'utente perché qui filtriamo c.is_active
+    # e c.has_online_shop = TRUE.
+    filters = [
+        "s.is_active = TRUE",
+        "c.is_active = TRUE",
+        "c.has_online_shop = TRUE",
+    ]
     params: dict = {"lat": lat, "lng": lng, "radius_m": radius_km * 1000}
 
     if chain_id:
