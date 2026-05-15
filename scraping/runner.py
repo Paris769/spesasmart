@@ -121,12 +121,13 @@ async def run_famila(
     async with httpx.AsyncClient() as client:
         spider = FamilaSpider(client, conn, dry_run=dry_run)
         count = await spider.discover_stores()
-        if discover_only:
-            print(f"\n=== Negozi Famila upsert: {count} ===")
-        else:
-            # Dopo la discovery, scrapa anche i prezzi via CosìComodo
-            price_spider = CosiComodoSpider(client, conn, dry_run=dry_run)
-            await price_spider.scrape_prices()
+        print(f"\n=== Negozi Famila upsert: {count} ===")
+        # NB: il price scraping via CosìComodo è DISATTIVATO — lo spider non
+        # ha la mappatura negozio→baseSiteId (vedi diagnosi nel docstring di
+        # cosicomodo_spider.py). Riattivare quando il fix è completo:
+        #     price_spider = CosiComodoSpider(client, conn, dry_run=dry_run)
+        #     await price_spider.scrape_prices()
+        _ = discover_only  # discovery sempre eseguita finché il price-scrape è off
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -139,7 +140,9 @@ async def main(args: argparse.Namespace) -> None:
         chains = (
             [args.chain]
             if args.chain != "all"
-            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo"]
+            # 'cosicomodo' escluso dal run 'all': spider non funzionante
+            # (manca mappatura negozio→baseSiteId, vedi cosicomodo_spider.py)
+            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila"]
         )
 
         for chain in chains:
