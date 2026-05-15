@@ -1,18 +1,41 @@
 """
-CosiComodoSpider — prezzi Famila (Nord, Nord-Est, Sud, Adriatica) via OCC API.
+CosiComodoSpider — prezzi Famila / gruppo Selex via OCC API.
 
-Flusso:
-  1. Legge tutti i negozi Famila dal DB (chain slug = 'famila').
-  2. Per ogni negozio: deriva lo storeAliasId dalla città (kebab-case),
-     poi proba i baseSiteId noti fino a trovare quello che restituisce prodotti.
-  3. Per ogni categoria (codici 10001-10016) e per ogni pagina:
-     GET https://api.cosicomodo.it/occ/v2/{baseSiteId}/stores/{storeAlias}/
-         users/anonymous/products/search-by-category
-         ?facet=:relevance&currentPage={n}&pageSize=100&fields=FULL&categoryCode={code}
-  4. Upsert prodotto + prezzo nel DB.
+╔══════════════════════════════════════════════════════════════════════════╗
+║  STATO: NON FUNZIONANTE — manca la mappatura negozio → baseSiteId.        ║
+║  Diagnosi completa 2026-05-12 (vedi sotto). Lo spider fa fail-fast        ║
+║  invece di sprecare 90 min di CI. NON è incluso nel run notturno.         ║
+╚══════════════════════════════════════════════════════════════════════════╝
 
-Nota: L'API è pubblica (users/anonymous), non richiede sessione.
-La pagina 0 è restituita sia da SSR che dall'API; lo spider usa sempre l'API.
+DIAGNOSI (verificata chiamando l'API live):
+
+  1. Base URL CORRETTO:  https://api.cosicomodo.it/occ/v2
+  2. Path endpoint CORRETTO:
+       /{baseSiteId}/stores/{storeAliasId}/users/{userId}/products/search-by-category
+  3. baseSiteId — i 14 valori precedenti (famila, familanord, familasud,
+     dok, sole365, …) erano presi dai PATH della sitemap del sito web, NON
+     sono base site dell'API OCC. L'API risponde:
+        "Base site <X> doesn't exist"  (HTTP 400)
+     Gli UNICI base site OCC validi trovati per probe sono:
+        - "cosicomodo"
+        - "selex"
+  4. storeAliasId — derivare città→kebab-case ("Novate Milanese" →
+     "novate-milanese") NON basta. "novate-milanese" È un aliasUid valido
+     ma sotto base site "cosicomodo"/"selex" risponde:
+        "SelexBaseStoreNotBelongingToBaseStoreError"
+     → ogni negozio appartiene a un base site SPECIFICO che non è né
+       "cosicomodo" né "selex" e non è stato identificato via probe.
+
+COSA SERVE PER COMPLETARE IL FIX:
+  Catturare UNA chiamata reale di search-by-category dal sito live
+  (cosicomodo.it/famila → selezione negozio → reparto). Da lì si leggono
+  il baseSiteId reale e lo storeAliasId reale. Probabilmente il sito
+  ottiene la coppia (baseSiteId, storeAliasId) da una GraphQL `getStores`
+  su NEXT_PUBLIC_STORE_SERVICE_ENDPONT (host non identificato staticamente).
+
+Finché la mappatura non è nota, `scrape_prices()` aborta dopo poche probe
+fallite. La discovery negozi (FamilaSpider via sitemap) resta funzionante
+ed è indipendente da questo spider.
 """
 from __future__ import annotations
 
@@ -34,23 +57,17 @@ RATE = 0.4          # secondi tra richieste (l'API pubblica non throttla aggress
 PROBE_TIMEOUT = 8   # secondi per il probe del baseSiteId
 CAT_CONCURRENCY = 3 # categorie in parallelo per negozio
 
-# Tutti i baseSiteId presenti su cosicomodo.it (da sitemap.xml)
+# Base site OCC verificati come ESISTENTI (probe live 2026-05-12).
+# NB: nessuno dei due contiene i singoli negozi — vedi diagnosi nel docstring.
+# I valori precedenti (famila, familanord, …) erano path web, non base site.
 BASE_SITE_IDS = [
-    "familanord",
-    "familanordest",
-    "famila",
-    "familasud",
-    "familaadriatica",
-    "italmark",
-    "ilgigante",
-    "emisfero",
-    "sole365",
-    "galassia",
-    "dok",
-    "mercato",
-    "emi",
-    "pan",
+    "cosicomodo",
+    "selex",
 ]
+
+# Dopo quante probe consecutive fallite abortire l'intero run.
+# Evita di sprecare i 90 minuti di timeout della GitHub Action.
+MAX_PROBE_FAILURES = 5
 
 # Codici categoria top-level (da __NEXT_DATA__.departments)
 CATEGORY_CODES = [str(c) for c in range(10001, 10017)]  # 10001–10016
@@ -366,6 +383,7 @@ class CosiComodoSpider:
         log.info("Negozi Famila in DB: %d", len(stores))
 
         total_upserted = 0
+        probe_failures = 0
         for store in stores:
             store_uuid = store["id"]
             city = store["city"]
@@ -377,7 +395,21 @@ class CosiComodoSpider:
             else:
                 result = await self._probe_store(city)
                 if result is None:
+                    probe_failures += 1
+                    # Fail-fast: se le prime probe falliscono tutte, lo spider
+                    # è strutturalmente rotto (manca la mappatura negozio →
+                    # baseSiteId, vedi docstring). Inutile insistere per 90 min.
+                    if probe_failures >= MAX_PROBE_FAILURES:
+                        log.error(
+                            "ABORT: %d probe consecutive fallite. Lo spider "
+                            "CosìComodo non ha la mappatura negozio→baseSiteId. "
+                            "Vedi diagnosi nel docstring del modulo. "
+                            "Scrape interrotto per non sprecare CI.",
+                            probe_failures,
+                        )
+                        return total_upserted
                     continue
+                probe_failures = 0
                 bsid, alias = result
                 self._store_cache[store_uuid] = (bsid, alias)
 
