@@ -27,7 +27,9 @@ log = logging.getLogger("conad")
 BASE_URL = "https://spesaonline.conad.it"
 SEARCH_URL = f"{BASE_URL}/search/_jcr_content/root/search.loader.html"
 PAGE_SIZE = 40
-RATE = 1.5  # secondi tra le richieste
+RATE = 2.5         # secondi tra le richieste (Conad rate-limita a ~1.5s → 429)
+RETRY_429_SLEEP = 30  # backoff lungo quando Conad risponde 429
+MAX_ATTEMPTS = 4
 
 HEADERS = {
     "User-Agent": (
@@ -74,7 +76,7 @@ class ConadSpider:
     async def _get_page(self, page: int) -> str | None:
         await self._throttle()
         params = {"q": "*", "page": page}
-        for attempt in range(3):
+        for attempt in range(MAX_ATTEMPTS):
             try:
                 r = await self.client.get(
                     SEARCH_URL, params=params, headers=HEADERS, timeout=30
@@ -84,6 +86,15 @@ class ConadSpider:
                 log.warning("HTTP %s pagina %d tentativo %d", r.status_code, page, attempt + 1)
                 if r.status_code in (403, 404):
                     return None
+                if r.status_code == 429:
+                    # Rate-limit: backoff lungo (rispetta Retry-After se presente)
+                    retry_after = r.headers.get("Retry-After")
+                    delay = RETRY_429_SLEEP
+                    if retry_after and retry_after.isdigit():
+                        delay = max(delay, int(retry_after))
+                    log.info("429 — attesa %ds prima di ritentare pagina %d", delay, page)
+                    await asyncio.sleep(delay)
+                    continue
             except httpx.RequestError as exc:
                 log.warning("Tentativo %d errore: %s", attempt + 1, exc)
             await asyncio.sleep(2 ** attempt)
