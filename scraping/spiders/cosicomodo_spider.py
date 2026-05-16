@@ -41,7 +41,6 @@ IMG_BASE = "https://images.cosicomodo.it"
 CHAIN_SLUG = "famila"
 PAGE_SIZE = 100
 RATE = 0.4           # secondi tra richieste (l'API pubblica non throttla forte)
-CAT_CONCURRENCY = 3  # categorie in parallelo per negozio
 
 # Negozi scrapati per esecuzione. 74 negozi a catalogo pieno non stanno nei
 # 90 min di CI: se ne fa un sottoinsieme a rotazione (seed = giorno) così
@@ -195,73 +194,121 @@ class CosiComodoSpider:
                 return url if url.startswith("http") else IMG_BASE + url
         return None
 
-    async def _upsert_product_price(self, p: dict, store_uuid: str) -> bool:
+    def _normalize(self, p: dict) -> Optional[dict]:
+        """Estrae i campi utili da un prodotto OCC, o None se non valido."""
         raw_code = str(p.get("code") or "").strip()
-        if not raw_code:
-            return False
-        barcode = canonical_ean(raw_code) or raw_code
-
         name = str(p.get("name") or "").strip()
-        if not name:
-            return False
-        brand = str(p.get("marca") or "").strip() or None
-        in_stock = bool(p.get("saleable", True))
-
+        if not raw_code or not name:
+            return None
         current, original, promo_label = self._extract_prices(p)
         if current <= 0:
-            return False
-
+            return None
         price_obj = p.get("discountedPrice") if p.get("flagPromo") else p.get("price")
-        price_per_unit: Optional[float] = None
+        ppu: Optional[float] = None
         if price_obj:
             raw_ppu = price_obj.get("priceReferenceUnit")
             try:
-                ppu = float(raw_ppu) if raw_ppu is not None else None
-                if ppu and ppu > 0:
-                    price_per_unit = round(ppu, 4)
+                v = float(raw_ppu) if raw_ppu is not None else None
+                if v and v > 0:
+                    ppu = round(v, 4)
             except (ValueError, TypeError):
                 pass
+        return {
+            "barcode": canonical_ean(raw_code) or raw_code,
+            "name": name,
+            "brand": str(p.get("marca") or "").strip() or None,
+            "image_url": self._extract_image(p),
+            "price": current,
+            "original_price": original,
+            "promo_label": promo_label,
+            "price_per_unit": ppu,
+            "in_stock": bool(p.get("saleable", True)),
+        }
 
-        image_url = self._extract_image(p)
-
+    async def _upsert_products_batch(
+        self, products: list[dict], store_uuid: str
+    ) -> int:
+        """
+        Upsert di una pagina di prodotti in ~5 round-trip DB invece di 4 per
+        prodotto (il DB remoto su Render ha ~150ms di latenza per query).
+        L'intera pagina è in una transazione.
+        """
+        by_bc: dict[str, dict] = {}
+        for raw in products:
+            n = self._normalize(raw)
+            if n:
+                by_bc[n["barcode"]] = n
+        if not by_bc:
+            return 0
         if self.dry_run:
-            log.info("[DRY] %-55s  €%.2f", name[:55], current)
-            return True
+            return len(by_bc)
 
-        prod_id = await self.conn.fetchval(
-            "SELECT id FROM products WHERE barcode = $1 LIMIT 1", barcode
-        )
-        if prod_id is None:
-            prod_id = await self.conn.fetchval(
-                """INSERT INTO products (barcode, name, brand, image_url, source)
-                   VALUES ($1, $2, $3, $4, 'cosicomodo') RETURNING id""",
-                barcode, name, brand, image_url,
+        barcodes = list(by_bc.keys())
+        async with self.conn.transaction():
+            existing = await self.conn.fetch(
+                "SELECT id, barcode FROM products WHERE barcode = ANY($1::text[])",
+                barcodes,
             )
-        else:
+            id_by_bc: dict[str, object] = {r["barcode"]: r["id"] for r in existing}
+            existing_bcs = set(id_by_bc.keys())
+
+            new_bcs = [bc for bc in barcodes if bc not in existing_bcs]
+            if new_bcs:
+                rows = await self.conn.fetch(
+                    """INSERT INTO products (barcode, name, brand, image_url, source)
+                       SELECT * FROM unnest($1::text[], $2::text[], $3::text[],
+                                            $4::text[], $5::text[])
+                       RETURNING id, barcode""",
+                    new_bcs,
+                    [by_bc[b]["name"] for b in new_bcs],
+                    [by_bc[b]["brand"] for b in new_bcs],
+                    [by_bc[b]["image_url"] for b in new_bcs],
+                    ["cosicomodo"] * len(new_bcs),
+                )
+                for r in rows:
+                    id_by_bc[r["barcode"]] = r["id"]
+
+            upd = [bc for bc in barcodes if bc in existing_bcs]
+            if upd:
+                await self.conn.execute(
+                    """UPDATE products AS p SET
+                           name = v.name,
+                           brand = COALESCE(v.brand, p.brand),
+                           image_url = COALESCE(p.image_url, v.image_url),
+                           updated_at = NOW()
+                       FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[])
+                            AS v(id, name, brand, image_url)
+                       WHERE p.id = v.id""",
+                    [id_by_bc[b] for b in upd],
+                    [by_bc[b]["name"] for b in upd],
+                    [by_bc[b]["brand"] for b in upd],
+                    [by_bc[b]["image_url"] for b in upd],
+                )
+
+            all_ids = [id_by_bc[b] for b in barcodes]
             await self.conn.execute(
-                """UPDATE products
-                      SET name = $2,
-                          brand = COALESCE($3, brand),
-                          image_url = COALESCE(image_url, $4),
-                          updated_at = NOW()
-                    WHERE id = $1""",
-                prod_id, name, brand, image_url,
+                "UPDATE prices SET is_current = FALSE "
+                "WHERE store_id = $1 AND product_id = ANY($2::uuid[])",
+                store_uuid, all_ids,
             )
-
-        await self.conn.execute(
-            "UPDATE prices SET is_current = FALSE "
-            "WHERE product_id = $1 AND store_id = $2",
-            prod_id, store_uuid,
-        )
-        await self.conn.execute(
-            """INSERT INTO prices
-                   (product_id, store_id, price, original_price, promo_label,
-                    price_per_unit, in_stock, is_current, source, scraped_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, 'cosicomodo', NOW())""",
-            prod_id, store_uuid, current, original, promo_label,
-            price_per_unit, in_stock,
-        )
-        return True
+            await self.conn.execute(
+                """INSERT INTO prices
+                       (product_id, store_id, price, original_price, promo_label,
+                        price_per_unit, in_stock, is_current, source, scraped_at)
+                   SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu, v.instock,
+                          TRUE, 'cosicomodo', NOW()
+                   FROM unnest($1::uuid[], $3::numeric[], $4::numeric[], $5::text[],
+                               $6::numeric[], $7::boolean[])
+                        AS v(id, price, orig, promo, ppu, instock)""",
+                all_ids,
+                store_uuid,
+                [by_bc[b]["price"] for b in barcodes],
+                [by_bc[b]["original_price"] for b in barcodes],
+                [by_bc[b]["promo_label"] for b in barcodes],
+                [by_bc[b]["price_per_unit"] for b in barcodes],
+                [by_bc[b]["in_stock"] for b in barcodes],
+            )
+        return len(barcodes)
 
     async def _scrape_category(
         self, site: str, alias: str, category_code: str, store_uuid: str
@@ -288,12 +335,14 @@ class CosiComodoSpider:
             if not data:
                 break
             total_pages = (data.get("pagination") or {}).get("totalPages", 1)
-            for p in data.get("products") or []:
-                try:
-                    if await self._upsert_product_price(p, store_uuid):
-                        upserted += 1
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("Errore prodotto %s: %s", p.get("code"), exc)
+            products = data.get("products") or []
+            try:
+                upserted += await self._upsert_products_batch(products, store_uuid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "Errore batch %s/%s cat=%s pag=%d: %s",
+                    site, alias, category_code, page, exc,
+                )
             page += 1
         return upserted
 
@@ -325,22 +374,17 @@ class CosiComodoSpider:
             if not store_uuid:
                 continue
             site, alias = store["site"], store["alias"]
-            sem = asyncio.Semaphore(CAT_CONCURRENCY)
 
-            async def _scrape_cat(code: str) -> int:
-                async with sem:
-                    return await self._scrape_category(site, alias, code, store_uuid)
-
-            results = await asyncio.gather(
-                *[_scrape_cat(c) for c in CATEGORY_CODES],
-                return_exceptions=True,
-            )
+            # Categorie SEQUENZIALI: una connessione asyncpg non supporta
+            # operazioni concorrenti ("another operation is in progress").
             store_total = 0
-            for res in results:
-                if isinstance(res, Exception):
-                    log.warning("  errore categoria: %s", res)
-                elif isinstance(res, int):
-                    store_total += res
+            for code in CATEGORY_CODES:
+                try:
+                    store_total += await self._scrape_category(
+                        site, alias, code, store_uuid
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("  errore categoria %s: %s", code, exc)
             log.info(
                 "[%d/%d] Famila %s (%s): %d prezzi",
                 i, len(stores), alias, site, store_total,
