@@ -62,7 +62,11 @@ export default function PriceCard({ result, rank }: Props) {
       </div>
 
       <p className="text-sm font-medium text-gray-700">{result.store_name}</p>
-      <p className="text-xs text-gray-500">{result.address} · {result.distance_km} km</p>
+      <p className="text-xs text-gray-500">
+        {result.is_online
+          ? "🌐 Spesa online · consegna in tutta Italia"
+          : `${result.address} · ${result.distance_km} km`}
+      </p>
 
       {result.promo_label && (
         <span className="text-xs bg-secondary/10 text-secondary font-semibold px-2 py-0.5 rounded">

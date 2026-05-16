@@ -134,14 +134,15 @@ export default function HomePage() {
 
           {prices && prices.length === 0 && (
             <div className="text-center py-8 text-gray-500">
-              Nessun prezzo trovato nel raggio di {radiusKm} km
+              Nessun prezzo trovato
             </div>
           )}
 
           {prices && prices.length > 0 && (
             <>
               <p className="text-sm text-gray-600">
-                Trovati <strong>{prices.length}</strong> prezzi entro {radiusKm} km
+                Trovati <strong>{prices.length}</strong> prezzi — spesa online
+                e negozi entro {radiusKm} km
               </p>
               <div className="flex flex-col gap-3">
                 {prices.map((p, i) => (
