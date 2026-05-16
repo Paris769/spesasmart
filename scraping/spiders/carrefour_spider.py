@@ -18,7 +18,6 @@ Nota: i prezzi sono visibili senza autenticazione (prezzi online nazionali).
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
 
 import asyncpg
 import httpx
@@ -332,70 +331,117 @@ class CarrefourSpider:
     # DB upsert
     # ------------------------------------------------------------------
 
-    async def _upsert_product(self, p: dict, store_uuid: str) -> bool:
-        barcode = p["pid"]  # EAN barcode diretto
+    async def _upsert_products_batch(
+        self, products: list[dict], store_uuid: str
+    ) -> int:
+        """
+        Upsert di un'intera pagina di prodotti in ~5 round-trip DB,
+        invece di 4 per prodotto (collo di bottiglia: DB remoto su Render).
+
+        Passi:
+          1. SELECT batch dei barcode già esistenti
+          2. INSERT multi-row dei prodotti nuovi (RETURNING id)
+          3. UPDATE batch dei prodotti esistenti (via unnest)
+          4. UPDATE batch is_current=FALSE dei prezzi vecchi
+          5. INSERT multi-row dei prezzi nuovi
+        """
+        # Dedup per barcode all'interno della pagina (l'ultimo vince)
+        by_bc: dict[str, dict] = {}
+        for p in products:
+            bc = p.get("pid")
+            if bc and p.get("name"):
+                by_bc[bc] = p
+        if not by_bc:
+            return 0
 
         if self.dry_run:
-            log.info(
-                "[DRY] %-55s  €%.2f%s",
-                p["name"][:55],
-                p["price"],
-                f"  ({p['price_per_unit']:.2f}/unit)" if p.get("price_per_unit") else "",
-            )
-            return True
+            for p in by_bc.values():
+                log.info("[DRY] %-55s  €%.2f", p["name"][:55], p["price"])
+            return len(by_bc)
 
-        prod_id = await self.conn.fetchval(
-            "SELECT id FROM products WHERE barcode = $1 LIMIT 1", barcode
-        )
-        if prod_id is None:
-            prod_id = await self.conn.fetchval(
-                """
-                INSERT INTO products (barcode, name, brand, image_url, source)
-                VALUES ($1, $2, $3, $4, 'carrefour_web')
-                RETURNING id
-                """,
-                barcode,
-                p["name"],
-                p.get("brand"),
-                p.get("image_url"),
+        barcodes = list(by_bc.keys())
+
+        # Transazione: l'intera pagina è atomica — se uno step fallisce,
+        # rollback completo (niente prodotti senza prezzo corrente).
+        async with self.conn.transaction():
+            # 1. Quali barcode esistono già
+            existing = await self.conn.fetch(
+                "SELECT id, barcode FROM products WHERE barcode = ANY($1::text[])",
+                barcodes,
             )
-        else:
+            id_by_bc: dict[str, object] = {r["barcode"]: r["id"] for r in existing}
+            existing_bcs = set(id_by_bc.keys())
+
+            # 2. Inserisce i prodotti nuovi (multi-row) e recupera gli id
+            new_bcs = [bc for bc in barcodes if bc not in existing_bcs]
+            if new_bcs:
+                rows = await self.conn.fetch(
+                    """
+                    INSERT INTO products (barcode, name, brand, image_url, source)
+                    SELECT * FROM unnest(
+                        $1::text[], $2::text[], $3::text[], $4::text[], $5::text[]
+                    )
+                    RETURNING id, barcode
+                    """,
+                    new_bcs,
+                    [by_bc[bc]["name"] for bc in new_bcs],
+                    [by_bc[bc].get("brand") for bc in new_bcs],
+                    [by_bc[bc].get("image_url") for bc in new_bcs],
+                    ["carrefour_web"] * len(new_bcs),
+                )
+                for r in rows:
+                    id_by_bc[r["barcode"]] = r["id"]
+
+            # 3. Aggiorna i prodotti già esistenti (un solo UPDATE via unnest)
+            upd_bcs = [bc for bc in barcodes if bc in existing_bcs]
+            if upd_bcs:
+                await self.conn.execute(
+                    """
+                    UPDATE products AS p SET
+                        name       = v.name,
+                        brand      = COALESCE(v.brand, p.brand),
+                        image_url  = COALESCE(v.image_url, p.image_url),
+                        updated_at = NOW()
+                    FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[])
+                         AS v(id, name, brand, image_url)
+                    WHERE p.id = v.id
+                    """,
+                    [id_by_bc[bc] for bc in upd_bcs],
+                    [by_bc[bc]["name"] for bc in upd_bcs],
+                    [by_bc[bc].get("brand") for bc in upd_bcs],
+                    [by_bc[bc].get("image_url") for bc in upd_bcs],
+                )
+
+            all_ids = [id_by_bc[bc] for bc in barcodes]
+
+            # 4. Marca non-correnti i prezzi vecchi (questo negozio)
+            await self.conn.execute(
+                "UPDATE prices SET is_current = FALSE "
+                "WHERE store_id = $1 AND product_id = ANY($2::uuid[])",
+                store_uuid,
+                all_ids,
+            )
+
+            # 5. Inserisce i prezzi nuovi (multi-row)
             await self.conn.execute(
                 """
-                UPDATE products
-                SET name       = $2,
-                    brand      = COALESCE($3, brand),
-                    image_url  = COALESCE($4, image_url),
-                    updated_at = NOW()
-                WHERE id = $1
+                INSERT INTO prices
+                    (product_id, store_id, price, original_price, promo_label,
+                     price_per_unit, in_stock, is_current, source, scraped_at)
+                SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu,
+                       TRUE, TRUE, 'carrefour_web', NOW()
+                FROM unnest($1::uuid[], $3::numeric[], $4::numeric[],
+                            $5::text[], $6::numeric[])
+                     AS v(id, price, orig, promo, ppu)
                 """,
-                prod_id,
-                p["name"],
-                p.get("brand"),
-                p.get("image_url"),
+                all_ids,
+                store_uuid,
+                [by_bc[bc]["price"] for bc in barcodes],
+                [by_bc[bc].get("original_price") for bc in barcodes],
+                [by_bc[bc].get("promo_label") for bc in barcodes],
+                [by_bc[bc].get("price_per_unit") for bc in barcodes],
             )
-
-        await self.conn.execute(
-            "UPDATE prices SET is_current = FALSE WHERE product_id = $1 AND store_id = $2",
-            prod_id,
-            store_uuid,
-        )
-        await self.conn.execute(
-            """
-            INSERT INTO prices
-                (product_id, store_id, price, original_price, promo_label,
-                 price_per_unit, in_stock, is_current, source, scraped_at)
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE, TRUE, 'carrefour_web', $7)
-            """,
-            prod_id,
-            store_uuid,
-            p["price"],
-            p.get("original_price"),
-            p.get("promo_label"),
-            p.get("price_per_unit"),
-            datetime.now(timezone.utc),
-        )
-        return True
+        return len(barcodes)
 
     # ------------------------------------------------------------------
     # Category scraping
@@ -434,13 +480,13 @@ class CarrefourSpider:
                 )
                 continue
             products = self._parse_ajax_products(ajax_data)
-            page_count = 0
-            for prod in products:
-                try:
-                    if await self._upsert_product(prod, store_uuid):
-                        page_count += 1
-                except Exception as exc:
-                    log.warning("Errore prodotto %s: %s", prod.get("pid"), exc)
+            try:
+                page_count = await self._upsert_products_batch(products, store_uuid)
+            except Exception as exc:
+                log.warning(
+                    "Errore batch %s pagina %d: %s", slug, page_num + 1, exc
+                )
+                page_count = 0
 
             grand_total += page_count
             if (page_num + 1) % 5 == 0 or (page_num + 1) == total_pages:
