@@ -60,7 +60,10 @@ export interface PriceResult {
   shop_url: string | null;
   has_delivery: boolean;
   has_click_collect: boolean;
-  distance_km: number;
+  /** null per i negozi online (spesa nazionale, distanza non significativa). */
+  distance_km: number | null;
+  /** true se è un negozio virtuale di spesa online (consegna nazionale). */
+  is_online: boolean;
 }
 
 // ── API calls ────────────────────────────────────────────────────────────────

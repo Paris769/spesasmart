@@ -49,14 +49,14 @@ async def search_products(
         params["category_id"] = category_id
 
     # Filtro geografico opzionale per il prezzo mostrato nei risultati.
-    # I negozi con consegna a domicilio (spesa online) sono nazionali:
-    # restano sempre visibili a prescindere dal raggio. Il raggio filtra
-    # solo i punti vendita fisici (click & collect).
+    # I negozi virtuali della spesa online (external_id '*-online') sono
+    # nazionali: restano sempre visibili a prescindere dal raggio. Il raggio
+    # filtra solo i punti vendita fisici (click & collect).
     price_geo = ""
     if lat is not None and lng is not None:
         price_geo = """
               AND (
-                    s.has_delivery = TRUE
+                    s.external_id LIKE '%-online'
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,
@@ -131,10 +131,14 @@ async def get_product_prices(
                 c.name  AS chain_name,
                 c.slug  AS chain_slug,
                 c.shop_url,
-                ROUND(ST_Distance(
-                    s.coordinates::geography,
-                    ST_Point(:lng, :lat)::geography
-                )::numeric / 1000, 2) AS distance_km
+                (s.external_id LIKE '%-online') AS is_online,
+                CASE
+                    WHEN s.external_id LIKE '%-online' THEN NULL
+                    ELSE ROUND(ST_Distance(
+                        s.coordinates::geography,
+                        ST_Point(:lng, :lat)::geography
+                    )::numeric / 1000, 2)
+                END AS distance_km
             FROM prices p
             JOIN stores s  ON p.store_id  = s.id
             JOIN chains c  ON s.chain_id  = c.id
@@ -142,7 +146,7 @@ async def get_product_prices(
               AND p.is_current  = TRUE
               AND s.is_active   = TRUE
               AND (
-                    s.has_delivery = TRUE
+                    s.external_id LIKE '%-online'
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,
