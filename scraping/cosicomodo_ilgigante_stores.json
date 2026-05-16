@@ -1,0 +1,14 @@
+[
+ {"site": "ilgigante", "alias": "san-giuliano-milanese-emilia", "lat": 45.37799, "lng": 9.30719},
+ {"site": "ilgigante", "alias": "cambiago", "lat": 45.57462, "lng": 9.41561},
+ {"site": "ilgigante", "alias": "cernusco-sul-naviglio", "lat": 45.50997, "lng": 9.33805},
+ {"site": "ilgigante", "alias": "villasanta", "lat": 45.61908, "lng": 9.30838},
+ {"site": "ilgigante", "alias": "bresso", "lat": 45.53423, "lng": 9.20784},
+ {"site": "ilgigante", "alias": "cinisello-balsamo", "lat": 45.55812, "lng": 9.21361},
+ {"site": "ilgigante", "alias": "milano-ornato", "lat": 45.52464, "lng": 9.18243},
+ {"site": "ilgigante", "alias": "paderno-dugnano", "lat": 45.56439, "lng": 9.18675},
+ {"site": "ilgigante", "alias": "cesano-boscone", "lat": 45.44547, "lng": 9.09108},
+ {"site": "ilgigante", "alias": "trezzano-sul-naviglio", "lat": 45.42673, "lng": 9.06472},
+ {"site": "ilgigante", "alias": "senago", "lat": 45.55890, "lng": 9.11481},
+ {"site": "ilgigante", "alias": "cesano-maderno", "lat": 45.62825, "lng": 9.16469}
+]
