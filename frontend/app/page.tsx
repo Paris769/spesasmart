@@ -10,6 +10,11 @@ export default function HomePage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  // Storico di navigazione: trail = prodotti visitati in sequenza,
+  // trailPos = posizione corrente (-1 = vista risultati di ricerca).
+  const [trail, setTrail] = useState<Product[]>([]);
+  const [trailPos, setTrailPos] = useState(-1);
+  const [baseQuery, setBaseQuery] = useState("");
   const { location, radiusKm, searchArea } = useAppStore();
 
   // Debounce: aspetta 350ms dopo l'ultima digitazione prima di cercare
@@ -46,30 +51,86 @@ export default function HomePage() {
     enabled: !!selectedProduct && !!location,
   });
 
+  // ── Navigazione avanti/indietro ────────────────────────────────────────────
+  // Apertura di un prodotto dalla lista: lo aggiunge allo storico.
+  const openProduct = (p: Product) => {
+    setTrail((t) => [...t.slice(0, trailPos + 1), p]);
+    setTrailPos((i) => i + 1);
+    setSelectedProduct(p);
+    setQuery(p.name);
+    setDebouncedQuery(p.name);
+  };
+
+  // Salta a una posizione dello storico (-1 = risultati di ricerca).
+  const applyPos = (pos: number) => {
+    setTrailPos(pos);
+    if (pos < 0) {
+      setSelectedProduct(null);
+      setQuery(baseQuery);
+      setDebouncedQuery(baseQuery);
+    } else {
+      const p = trail[pos];
+      setSelectedProduct(p);
+      setQuery(p.name);
+      setDebouncedQuery(p.name);
+    }
+  };
+
+  // Nuova ricerca digitata: azzera lo storico.
+  const resetTrail = (q: string) => {
+    setBaseQuery(q);
+    setTrail([]);
+    setTrailPos(-1);
+  };
+
+  const canGoBack = trailPos >= 0;
+  const canGoForward = trailPos < trail.length - 1;
+
   return (
     <div className="flex flex-col gap-4">
       <LocationBar />
 
-      {/* Search bar */}
-      <div className="relative">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setSelectedProduct(null);
-          }}
-          placeholder="Cerca un prodotto… es. latte intero, pasta barilla"
-          className="w-full border-2 border-gray-200 focus:border-primary rounded-xl px-4 py-3 text-lg outline-none transition"
-        />
-        {query && (
-          <button
-            onClick={() => { setQuery(""); setSelectedProduct(null); }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-xl"
-          >
-            ×
-          </button>
-        )}
+      {/* Barra di ricerca con frecce avanti/indietro */}
+      <div className="flex items-stretch gap-2">
+        <button
+          onClick={() => applyPos(trailPos - 1)}
+          disabled={!canGoBack}
+          aria-label="Indietro"
+          title="Indietro"
+          className="shrink-0 w-11 rounded-xl border-2 border-gray-200 text-xl text-gray-600 hover:border-primary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed transition"
+        >
+          ←
+        </button>
+        <button
+          onClick={() => applyPos(trailPos + 1)}
+          disabled={!canGoForward}
+          aria-label="Avanti"
+          title="Avanti"
+          className="shrink-0 w-11 rounded-xl border-2 border-gray-200 text-xl text-gray-600 hover:border-primary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed transition"
+        >
+          →
+        </button>
+        <div className="relative flex-1">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelectedProduct(null);
+              resetTrail(e.target.value);
+            }}
+            placeholder="Cerca un prodotto… es. latte intero, pasta barilla"
+            className="w-full border-2 border-gray-200 focus:border-primary rounded-xl px-4 py-3 text-lg outline-none transition"
+          />
+          {query && (
+            <button
+              onClick={() => { setQuery(""); setSelectedProduct(null); resetTrail(""); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-xl"
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Suggerimenti prodotti */}
@@ -82,7 +143,7 @@ export default function HomePage() {
             {products.map((p) => (
               <li key={p.id}>
                 <button
-                  onClick={() => { setSelectedProduct(p); setQuery(p.name); }}
+                  onClick={() => openProduct(p)}
                   className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3"
                 >
                   {p.image_url ? (
