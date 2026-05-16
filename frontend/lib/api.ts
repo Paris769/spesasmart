@@ -68,15 +68,32 @@ export interface PriceResult {
 
 // ── API calls ────────────────────────────────────────────────────────────────
 
+/** Codifica un poligono [[lat,lng],…] come "lat,lng;lat,lng;…" per la query.
+ *  Ritorna undefined se l'area non è valida (< 3 punti). */
+export const encodeArea = (
+  area?: [number, number][] | null
+): string | undefined => {
+  if (!area || area.length < 3) return undefined;
+  return area.map(([la, ln]) => `${la.toFixed(6)},${ln.toFixed(6)}`).join(";");
+};
+
 export const searchProducts = (
   q: string,
   lat?: number,
   lng?: number,
-  radiusKm?: number
+  radiusKm?: number,
+  area?: [number, number][] | null
 ) =>
   api
     .get<Product[]>("/products/search", {
-      params: { q, limit: 100, lat, lng, radius_km: radiusKm },
+      params: {
+        q,
+        limit: 100,
+        lat,
+        lng,
+        radius_km: radiusKm,
+        area: encodeArea(area),
+      },
     })
     .then((r) => r.data);
 
@@ -84,11 +101,12 @@ export const getProductPrices = (
   productId: string,
   lat: number,
   lng: number,
-  radiusKm: number
+  radiusKm: number,
+  area?: [number, number][] | null
 ) =>
   api
     .get<PriceResult[]>(`/products/${productId}/prices`, {
-      params: { lat, lng, radius_km: radiusKm },
+      params: { lat, lng, radius_km: radiusKm, area: encodeArea(area) },
     })
     .then((r) => r.data);
 
