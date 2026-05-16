@@ -1,0 +1,64 @@
+name: Scraper CosìComodo
+
+# Scraping dedicato CosìComodo (Famila / Il Gigante / Italmark).
+# Separato dal workflow "Scraper prezzi" perché lo scrape per-negozio è
+# lungo: lo spider scrapa un sottoinsieme a rotazione (MAX_STORES/giorno),
+# così in pochi giorni copre tutti i 101 negozi senza sforare il timeout.
+# Gira mezz'ora dopo lo scraper principale per non sovraccaricare il DB.
+
+on:
+  schedule:
+    # Ogni notte alle 05:30 CET (04:30 UTC) — dopo "Scraper prezzi" (02:00)
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+    inputs:
+      max_stores:
+        description: "Negozi da scrapare in questo run"
+        required: false
+        default: "10"
+        type: string
+      dry_run:
+        description: "Dry run (non scrive nel DB)"
+        required: false
+        default: "false"
+        type: boolean
+
+jobs:
+  scrape:
+    name: Scrape CosìComodo
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+
+      - name: Installa dipendenze scraper
+        run: pip install -r scraping/requirements.txt
+
+      - name: Scrape CosìComodo (Famila / Il Gigante / Italmark)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COSICOMODO_MAX_STORES: ${{ inputs.max_stores || '10' }}
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then FLAGS="--dry-run"; fi
+          python -m scraping.runner --chain cosicomodo $FLAGS
+
+      - name: Dedup prodotti
+        # Unisce i prodotti CosìComodo appena scrapati con le altre catene
+        # (match esatto su EAN). Saltato in dry-run.
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scraping.runner --chain dedup
+
+      - name: Notifica fallimento
+        if: failure()
+        run: |
+          echo "::error::Scraper CosìComodo fallito — controlla i log sopra"
