@@ -1,17 +1,20 @@
 "use client";
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, AreaPoint } from "@/lib/store";
 
 // Leaflet va importato dinamicamente (richiede window, no SSR)
 const MapView = dynamic(() => import("@/components/ui/MapView"), { ssr: false });
 
-const RADII = [1, 3, 5, 10, 20];
+const RADII = [1, 3, 5, 10, 20, 30, 50];
 
 export default function LocationBar() {
-  const { location, radiusKm, setLocation, setRadius } = useAppStore();
+  const { location, radiusKm, searchArea, setLocation, setRadius, setSearchArea } =
+    useAppStore();
   const [showMap, setShowMap] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [drawMode, setDrawMode] = useState(false);
+  const [draftArea, setDraftArea] = useState<AreaPoint[]>([]);
 
   const detectLocation = (silent = false) => {
     if (!navigator.geolocation) {
@@ -37,15 +40,30 @@ export default function LocationBar() {
     );
   };
 
-  // Auto-detect al mount quando: location nulla (prima visita) OPPURE
-  // la posizione salvata era stata auto-rilevata (label "Posizione attuale"),
-  // così le coordinate GPS stale vengono aggiornate automaticamente.
+  // Auto-detect al mount (prima visita o posizione auto-rilevata stale).
   useEffect(() => {
     if (!location || location.label === "Posizione attuale") {
       detectLocation(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const startDrawing = () => {
+    setDraftArea([]);
+    setDrawMode(true);
+    setShowMap(true);
+  };
+
+  const confirmArea = () => {
+    setSearchArea(draftArea);
+    setDrawMode(false);
+    setDraftArea([]);
+  };
+
+  const cancelDrawing = () => {
+    setDrawMode(false);
+    setDraftArea([]);
+  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -79,17 +97,18 @@ export default function LocationBar() {
           </>
         )}
 
-        <div className="flex items-center gap-1 ml-auto">
+        {/* Raggio / area personalizzata */}
+        <div className="flex items-center gap-1 ml-auto flex-wrap">
           <span className="text-xs text-gray-600">Raggio:</span>
           {RADII.map((r) => (
             <button
               key={r}
               onClick={() => setRadius(r)}
               className={`text-xs px-2 py-1 rounded-full border transition ${
-                radiusKm === r
+                radiusKm === r && !searchArea
                   ? "bg-primary text-white border-primary"
                   : "border-gray-300 hover:border-primary"
-              }`}
+              } ${searchArea ? "opacity-50" : ""}`}
             >
               {r} km
             </button>
@@ -97,16 +116,85 @@ export default function LocationBar() {
         </div>
       </div>
 
-      {/* Mappa con la posizione attuale — compare al click del pulsante */}
+      {/* Barra strumenti area — visibile solo a mappa aperta */}
       {showMap && location && (
-        <div className="rounded-xl overflow-hidden border shadow h-[280px]">
+        <div className="flex flex-wrap items-center gap-2 bg-white border rounded-xl px-3 py-2 shadow-sm">
+          {!drawMode && !searchArea && (
+            <button
+              onClick={startDrawing}
+              className="text-xs px-3 py-1.5 rounded-lg border border-primary text-primary hover:bg-green-50 transition"
+            >
+              ✏️ Disegna area di interesse
+            </button>
+          )}
+
+          {!drawMode && searchArea && (
+            <>
+              <span className="text-xs bg-green-50 text-green-800 px-2 py-1 rounded-lg">
+                📐 Area personalizzata · {searchArea.length} punti
+              </span>
+              <button
+                onClick={startDrawing}
+                className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition"
+              >
+                ✏️ Ridisegna
+              </button>
+              <button
+                onClick={() => setSearchArea(null)}
+                className="text-xs px-2 py-1 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition"
+              >
+                🗑 Rimuovi area
+              </button>
+            </>
+          )}
+
+          {drawMode && (
+            <>
+              <span className="text-xs text-gray-600">
+                Tocca la mappa per aggiungere i punti — {draftArea.length}{" "}
+                {draftArea.length === 1 ? "punto" : "punti"}
+              </span>
+              <button
+                onClick={() => setDraftArea((a) => a.slice(0, -1))}
+                disabled={draftArea.length === 0}
+                className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition disabled:opacity-40"
+              >
+                ↩ Annulla punto
+              </button>
+              <button
+                onClick={confirmArea}
+                disabled={draftArea.length < 3}
+                className="text-xs px-3 py-1 rounded-lg bg-primary text-white hover:bg-green-700 transition disabled:opacity-40"
+              >
+                ✓ Conferma area
+              </button>
+              <button
+                onClick={cancelDrawing}
+                className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition"
+              >
+                ✗ Esci
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Mappa — compare al click su "Posizione attuale" o "Mostra mappa" */}
+      {showMap && location && (
+        <div
+          className={`rounded-xl overflow-hidden border shadow ${
+            drawMode ? "h-[360px]" : "h-[280px]"
+          }`}
+        >
           <MapView
-            // key sulle coordinate: rimonta la mappa quando la posizione
-            // cambia, così si ri-centra sul nuovo punto
             key={`${location.lat.toFixed(5)},${location.lng.toFixed(5)}`}
             center={[location.lat, location.lng]}
             stores={[]}
             radiusKm={radiusKm}
+            drawMode={drawMode}
+            draftArea={draftArea}
+            savedArea={searchArea}
+            onMapClick={(p) => setDraftArea((a) => [...a, p])}
           />
         </div>
       )}

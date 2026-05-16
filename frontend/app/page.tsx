@@ -10,7 +10,7 @@ export default function HomePage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const { location, radiusKm } = useAppStore();
+  const { location, radiusKm, searchArea } = useAppStore();
 
   // Debounce: aspetta 350ms dopo l'ultima digitazione prima di cercare
   useEffect(() => {
@@ -20,17 +20,29 @@ export default function HomePage() {
   }, [query, selectedProduct]);
 
   const { data: products, isFetching: searching } = useQuery({
-    queryKey: ["search", debouncedQuery, location, radiusKm],
+    queryKey: ["search", debouncedQuery, location, radiusKm, searchArea],
     queryFn: () =>
-      searchProducts(debouncedQuery, location?.lat, location?.lng, radiusKm),
+      searchProducts(
+        debouncedQuery,
+        location?.lat,
+        location?.lng,
+        radiusKm,
+        searchArea
+      ),
     enabled: debouncedQuery.length >= 2 && !selectedProduct,
     staleTime: 30_000,
   });
 
   const { data: prices, isFetching: loadingPrices } = useQuery({
-    queryKey: ["prices", selectedProduct?.id, location, radiusKm],
+    queryKey: ["prices", selectedProduct?.id, location, radiusKm, searchArea],
     queryFn: () =>
-      getProductPrices(selectedProduct!.id, location!.lat, location!.lng, radiusKm),
+      getProductPrices(
+        selectedProduct!.id,
+        location!.lat,
+        location!.lng,
+        radiusKm,
+        searchArea
+      ),
     enabled: !!selectedProduct && !!location,
   });
 

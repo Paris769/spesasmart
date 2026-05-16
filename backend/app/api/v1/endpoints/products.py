@@ -7,6 +7,42 @@ from app.db.session import get_db
 router = APIRouter(prefix="/products", tags=["products"])
 
 
+def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
+    """
+    Converte un'area "lat,lng;lat,lng;…" (poligono disegnato sulla mappa)
+    in un POLYGON WKT, oppure None se l'input non è valido.
+
+    I valori sono validati come float in range geografico: il WKT risultante
+    viene passato come parametro bound a ST_GeomFromText (nessuna injection).
+    """
+    if not area:
+        return None
+    pts: list[tuple[float, float]] = []
+    for chunk in area.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = chunk.split(",")
+        if len(parts) != 2:
+            return None
+        try:
+            lat = float(parts[0])
+            lng = float(parts[1])
+        except ValueError:
+            return None
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+            return None
+        pts.append((lat, lng))
+    if len(pts) < 3:
+        return None
+    # Chiude l'anello del poligono (primo punto == ultimo)
+    if pts[0] != pts[-1]:
+        pts.append(pts[0])
+    # WKT usa l'ordine x y = lng lat
+    coords = ", ".join(f"{lng} {lat}" for lat, lng in pts)
+    return f"POLYGON(({coords}))"
+
+
 @router.get("/search")
 async def search_products(
     q: Optional[str] = Query(None, min_length=2),
@@ -15,6 +51,7 @@ async def search_products(
     lat: Optional[float] = Query(None),
     lng: Optional[float] = Query(None),
     radius_km: float = Query(5.0, ge=0.5, le=50),
+    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     db: AsyncSession = Depends(get_db),
@@ -50,10 +87,21 @@ async def search_products(
 
     # Filtro geografico opzionale per il prezzo mostrato nei risultati.
     # I negozi virtuali della spesa online (external_id '*-online') sono
-    # nazionali: restano sempre visibili a prescindere dal raggio. Il raggio
-    # filtra solo i punti vendita fisici (click & collect).
+    # nazionali: restano sempre visibili. Il filtro (area disegnata, oppure
+    # raggio) si applica solo ai punti vendita fisici (click & collect).
     price_geo = ""
-    if lat is not None and lng is not None:
+    area_wkt = _parse_area_wkt(area)
+    if area_wkt:
+        price_geo = """
+              AND (
+                    s.external_id LIKE '%-online'
+                    OR ST_Contains(
+                         ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
+                         s.coordinates
+                       )
+                  )"""
+        params["area_wkt"] = area_wkt
+    elif lat is not None and lng is not None:
         price_geo = """
               AND (
                     s.external_id LIKE '%-online'
@@ -118,11 +166,35 @@ async def get_product_prices(
     lat: float = Query(...),
     lng: float = Query(...),
     radius_km: float = Query(5.0, ge=0.5, le=50),
+    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Prezzi del prodotto nei negozi vicini, ordinati per prezzo crescente."""
+    """Prezzi del prodotto nei negozi vicini, ordinati per prezzo crescente.
+
+    Il filtro geografico sui punti vendita fisici usa l'area disegnata
+    (se fornita) oppure il raggio. I negozi della spesa online sono
+    sempre inclusi (consegna nazionale).
+    """
+    params: dict = {"product_id": product_id, "lat": lat, "lng": lng}
+    area_wkt = _parse_area_wkt(area)
+    if area_wkt:
+        geo_filter = """s.external_id LIKE '%-online'
+                    OR ST_Contains(
+                         ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
+                         s.coordinates
+                       )"""
+        params["area_wkt"] = area_wkt
+    else:
+        geo_filter = """s.external_id LIKE '%-online'
+                    OR ST_DWithin(
+                         s.coordinates::geography,
+                         ST_Point(:lng, :lat)::geography,
+                         :radius_m
+                       )"""
+        params["radius_m"] = radius_km * 1000
+
     result = await db.execute(
-        text("""
+        text(f"""
             SELECT
                 p.price, p.original_price, p.promo_label,
                 p.price_per_unit, p.in_stock, p.scraped_at,
@@ -145,18 +217,11 @@ async def get_product_prices(
             WHERE p.product_id = :product_id
               AND p.is_current  = TRUE
               AND s.is_active   = TRUE
-              AND (
-                    s.external_id LIKE '%-online'
-                    OR ST_DWithin(
-                         s.coordinates::geography,
-                         ST_Point(:lng, :lat)::geography,
-                         :radius_m
-                       )
-                  )
+              AND ({geo_filter})
             ORDER BY p.price ASC
             LIMIT 30
         """),
-        {"product_id": product_id, "lat": lat, "lng": lng, "radius_m": radius_km * 1000},
+        params,
     )
     return [dict(r) for r in result.mappings().all()]
 
