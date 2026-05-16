@@ -151,16 +151,9 @@ export default function LocationBar() {
           {drawMode && (
             <>
               <span className="text-xs text-gray-600">
-                Tocca la mappa per aggiungere i punti — {draftArea.length}{" "}
-                {draftArea.length === 1 ? "punto" : "punti"}
+                ✏️ Tieni premuto e trascina sulla mappa per disegnare l'area
+                {draftArea.length >= 3 && " — area tracciata ✓"}
               </span>
-              <button
-                onClick={() => setDraftArea((a) => a.slice(0, -1))}
-                disabled={draftArea.length === 0}
-                className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition disabled:opacity-40"
-              >
-                ↩ Annulla punto
-              </button>
               <button
                 onClick={confirmArea}
                 disabled={draftArea.length < 3}
@@ -194,7 +187,7 @@ export default function LocationBar() {
             drawMode={drawMode}
             draftArea={draftArea}
             savedArea={searchArea}
-            onMapClick={(p) => setDraftArea((a) => [...a, p])}
+            onDraftChange={(pts) => setDraftArea(pts)}
           />
         </div>
       )}

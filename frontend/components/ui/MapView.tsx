@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -6,7 +7,7 @@ import {
   Popup,
   Circle,
   Polygon,
-  CircleMarker,
+  useMap,
   useMapEvents,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -27,30 +28,81 @@ interface Props {
   center: LatLng;
   stores: Store[];
   radiusKm: number;
-  /** Modalità disegno: i click sulla mappa aggiungono vertici. */
+  /** Modalità disegno: tieni premuto e trascina per tracciare l'area. */
   drawMode?: boolean;
-  /** Vertici del poligono in fase di disegno. */
+  /** Tracciato dell'area in fase di disegno. */
   draftArea?: LatLng[];
   /** Area personalizzata già confermata. */
   savedArea?: LatLng[] | null;
-  /** Callback su click in modalità disegno. */
-  onMapClick?: (latlng: LatLng) => void;
-}
-
-/** Cattura i click sulla mappa quando si sta disegnando l'area. */
-function ClickHandler({ onClick }: { onClick: (p: LatLng) => void }) {
-  useMapEvents({
-    click: (e) => onClick([e.latlng.lat, e.latlng.lng]),
-  });
-  return null;
+  /** Callback continuo col tracciato mentre si disegna. */
+  onDraftChange?: (pts: LatLng[]) => void;
 }
 
 const AREA_STYLE = {
   color: "#16a34a",
   fillColor: "#16a34a",
-  fillOpacity: 0.12,
+  fillOpacity: 0.15,
   weight: 2,
 };
+
+const MIN_PX_GAP = 8; // distanza minima in pixel tra punti campionati
+const MAX_POINTS = 300; // tetto al numero di punti del tracciato
+
+/**
+ * Disegno a mano libera: mousedown inizia il tracciato, mousemove lo estende
+ * (campionato ogni ~8px), mouseup lo chiude. Durante il disegno il pan della
+ * mappa è disattivato così il trascinamento traccia l'area invece di spostare
+ * la vista.
+ */
+function FreehandHandler({
+  enabled,
+  onDraft,
+}: {
+  enabled: boolean;
+  onDraft: (pts: LatLng[]) => void;
+}) {
+  const map = useMap();
+  const drawing = useRef(false);
+  const pts = useRef<LatLng[]>([]);
+
+  useEffect(() => {
+    const container = map.getContainer();
+    if (enabled) container.style.cursor = "crosshair";
+    else container.style.cursor = "";
+    // alla pulizia: ripristina cursore e pan
+    return () => {
+      container.style.cursor = "";
+      map.dragging.enable();
+    };
+  }, [enabled, map]);
+
+  useMapEvents({
+    mousedown(e) {
+      if (!enabled) return;
+      drawing.current = true;
+      pts.current = [[e.latlng.lat, e.latlng.lng]];
+      map.dragging.disable();
+      onDraft([...pts.current]);
+    },
+    mousemove(e) {
+      if (!enabled || !drawing.current) return;
+      if (pts.current.length >= MAX_POINTS) return;
+      const last = pts.current[pts.current.length - 1];
+      const lastPx = map.latLngToContainerPoint(L.latLng(last[0], last[1]));
+      if (lastPx.distanceTo(e.containerPoint) < MIN_PX_GAP) return;
+      pts.current.push([e.latlng.lat, e.latlng.lng]);
+      onDraft([...pts.current]);
+    },
+    mouseup() {
+      if (!enabled || !drawing.current) return;
+      drawing.current = false;
+      map.dragging.enable();
+      onDraft([...pts.current]);
+    },
+  });
+
+  return null;
+}
 
 export default function MapView({
   center,
@@ -59,20 +111,22 @@ export default function MapView({
   drawMode = false,
   draftArea = [],
   savedArea = null,
-  onMapClick,
+  onDraftChange,
 }: Props) {
   const polygon = drawMode ? draftArea : savedArea ?? [];
   // Il cerchio del raggio si mostra solo se non c'è un'area personalizzata
   const showCircle = !drawMode && (!savedArea || savedArea.length < 3);
 
   return (
-    <MapContainer center={center} zoom={12} className="h-full w-full">
+    <MapContainer center={center} zoom={11} className="h-full w-full">
       <TileLayer
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='© <a href="https://www.openstreetmap.org/">OpenStreetMap</a>'
       />
 
-      {drawMode && onMapClick && <ClickHandler onClick={onMapClick} />}
+      {drawMode && onDraftChange && (
+        <FreehandHandler enabled={drawMode} onDraft={onDraftChange} />
+      )}
 
       {/* Cerchio raggio ricerca */}
       {showCircle && (
@@ -83,26 +137,10 @@ export default function MapView({
         />
       )}
 
-      {/* Poligono area personalizzata (confermata o in disegno) */}
+      {/* Poligono area (tracciato a mano libera o area confermata) */}
       {polygon.length >= 3 && (
         <Polygon positions={polygon} pathOptions={AREA_STYLE} />
       )}
-
-      {/* Vertici durante il disegno */}
-      {drawMode &&
-        draftArea.map((p, i) => (
-          <CircleMarker
-            key={i}
-            center={p}
-            radius={5}
-            pathOptions={{
-              color: "#16a34a",
-              fillColor: "#ffffff",
-              fillOpacity: 1,
-              weight: 2,
-            }}
-          />
-        ))}
 
       {/* Marker utente */}
       <Marker position={center}>
