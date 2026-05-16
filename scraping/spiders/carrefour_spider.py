@@ -30,7 +30,7 @@ BASE_URL = "https://www.carrefour.it"
 AJAX_URL = (
     f"{BASE_URL}/on/demandware.store/Sites-carrefour-IT-Site/it_IT/Search-ShowAjax"
 )
-PAGE_SIZE = 25
+PAGE_SIZE = 100  # l'endpoint AJAX accetta fino a sz=100 → 4× meno richieste
 RATE = 1.5  # secondi tra le richieste
 
 _CAR_LAT = 45.4654  # Milano (HQ Carrefour Italia)
@@ -422,19 +422,18 @@ class CarrefourSpider:
 
         grand_total = 0
         for page_num in range(total_pages):
-            if page_num == 0:
-                products = self._parse_products(first_html)
-            else:
-                ajax_data = await self._get_json(
-                    AJAX_URL,
-                    params={"cgid": cgid, "start": page_num * PAGE_SIZE, "sz": PAGE_SIZE},
+            # Tutte le pagine via endpoint AJAX (JSON), incluso start=0.
+            # La pagina categoria HTML serve solo per cgid+total (_get_grid_info).
+            ajax_data = await self._get_json(
+                AJAX_URL,
+                params={"cgid": cgid, "start": page_num * PAGE_SIZE, "sz": PAGE_SIZE},
+            )
+            if not ajax_data:
+                log.warning(
+                    "Pagina %d non ottenuta per %s, salto", page_num + 1, slug
                 )
-                if not ajax_data:
-                    log.warning(
-                        "Pagina %d non ottenuta per %s, salto", page_num + 1, slug
-                    )
-                    continue
-                products = self._parse_ajax_products(ajax_data)
+                continue
+            products = self._parse_ajax_products(ajax_data)
             page_count = 0
             for prod in products:
                 try:
