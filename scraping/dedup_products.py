@@ -30,7 +30,7 @@ import sys
 
 import asyncpg
 
-from .ean import canonical_ean, name_token_jaccard, norm_brand, normalize_quantity
+from .ean import canonical_ean, norm_brand, normalize_quantity, same_product_name
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,10 +44,11 @@ DB_URL = (
     .replace("postgresql+asyncpg://", "postgresql://")
 )
 
-# Soglia di similarità per il match fuzzy (Pass B). Il blocking per
-# brand+quantità rende già impossibile fondere brand/formati diversi;
-# questa soglia separa prodotti simili dello stesso brand e formato.
-JACCARD_THRESHOLD = 0.6
+# Pass B fonde due righe SOLO se, oltre ad avere stesso brand e stessa
+# quantità, hanno ESATTAMENTE lo stesso insieme di token nel nome.
+# (Un dry-run con match fuzzy permissivo fondeva erroneamente "intero" con
+#  "scremato", "1% grassi" con "senza grassi", "Benefit Proteine" con
+#  "Benefit Calcio": un singolo token di differenza = prodotto diverso.)
 
 
 class _UnionFind:
@@ -147,13 +148,13 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
                 uf.union(grp[0]["id"], p["id"])
     log.info("Pass A (EAN esatto): %d gruppi di duplicati", pass_a_groups)
 
-    # ── Pass B: match fuzzy entro blocchi brand+quantità ─────────────────────
+    # ── Pass B: stesso brand + stessa quantità + stessi token nel nome ───────
     blocks: dict[tuple, list[dict]] = {}
     for p in products:
         brand = norm_brand(p["brand"])
         qty = normalize_quantity(p["name"])
         if not brand or not qty:
-            continue  # senza brand o quantità certi → niente fuzzy (sicurezza)
+            continue  # senza brand o quantità certi → niente match (sicurezza)
         blocks.setdefault((brand, qty), []).append(p)
 
     pass_b_pairs = 0
@@ -165,10 +166,10 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
                 a, b = grp[i], grp[j]
                 if uf.find(a["id"]) == uf.find(b["id"]):
                     continue
-                if name_token_jaccard(a["name"], b["name"]) >= JACCARD_THRESHOLD:
+                if same_product_name(a["name"], b["name"]):
                     uf.union(a["id"], b["id"])
                     pass_b_pairs += 1
-    log.info("Pass B (fuzzy brand+quantità): %d coppie unite", pass_b_pairs)
+    log.info("Pass B (brand+quantità+nome identici): %d coppie unite", pass_b_pairs)
 
     # ── Costruzione dei gruppi di merge ──────────────────────────────────────
     by_id = {p["id"]: p for p in products}

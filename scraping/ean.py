@@ -108,11 +108,19 @@ def normalize_quantity(text: str) -> str | None:
 
 
 def _tokens(text: str) -> set[str]:
-    """Token significativi di un nome prodotto (senza quantità né stopword)."""
+    """
+    Token significativi di un nome prodotto (senza quantità né stopword).
+    I token numerici (es. "1" di "1%", "14"/"21" di "14x/21x") sono SEMPRE
+    tenuti, anche se corti: distinguono spesso varianti diverse dello
+    stesso brand/formato.
+    """
     t = _strip_accents((text or "").lower())
     t = _UNIT_RE.sub(" ", t)
     words = re.findall(r"[a-z0-9]+", t)
-    return {w for w in words if len(w) > 2 and w not in _STOPWORDS}
+    return {
+        w for w in words
+        if w not in _STOPWORDS and (w.isdigit() or len(w) > 2)
+    }
 
 
 def norm_brand(brand) -> str:
@@ -131,3 +139,17 @@ def name_token_jaccard(name_a: str, name_b: str) -> float:
     inter = len(ta & tb)
     union = len(ta | tb)
     return inter / union if union else 0.0
+
+
+def same_product_name(name_a: str, name_b: str) -> bool:
+    """
+    True se i due nomi hanno ESATTAMENTE lo stesso insieme di token
+    significativi (ordine e ripetizioni irrilevanti).
+
+    È volutamente severo: un nome che differisce anche per un solo token
+    (es. "1%" vs "senza", "intero" vs "scremato", "proteine" vs "calcio")
+    identifica un PRODOTTO DIVERSO e non va fuso. Meglio un mancato match
+    che una fusione errata.
+    """
+    ta, tb = _tokens(name_a), _tokens(name_b)
+    return bool(ta) and ta == tb
