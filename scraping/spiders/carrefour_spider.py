@@ -26,10 +26,12 @@ from bs4 import BeautifulSoup
 log = logging.getLogger("carrefour")
 
 BASE_URL = "https://www.carrefour.it"
-AJAX_URL = (
-    f"{BASE_URL}/on/demandware.store/Sites-carrefour-IT-Site/it_IT/Search-ShowAjax"
+# Search-UpdateGrid restituisce HTML CON le immagini prodotto.
+# (Search-ShowAjax è più veloce ma il suo JSON non contiene le immagini.)
+UPDATEGRID_URL = (
+    f"{BASE_URL}/on/demandware.store/Sites-carrefour-IT-Site/it_IT/Search-UpdateGrid"
 )
-PAGE_SIZE = 100  # l'endpoint AJAX accetta fino a sz=100 → 4× meno richieste
+GRID_PAGE_SIZE = 24  # prodotti richiesti per chiamata UpdateGrid
 RATE = 1.5  # secondi tra le richieste
 
 _CAR_LAT = 45.4654  # Milano (HQ Carrefour Italia)
@@ -302,11 +304,13 @@ class CarrefourSpider:
                 self._parse_unit_price(unit_el.get_text()) if unit_el else None
             )
 
-            # Immagine
+            # Immagine — rende assoluto l'URL se relativo
             img_el = item.select_one(".tile-image")
             image_url: str | None = None
             if img_el:
                 image_url = img_el.get("src") or img_el.get("data-src") or None
+            if image_url and image_url.startswith("/"):
+                image_url = BASE_URL + image_url
 
             # Etichetta promozione
             promo_el = item.select_one(".offers-label, .badge-pill")
@@ -463,39 +467,45 @@ class CarrefourSpider:
             )
             return 0
 
-        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
-        log.info("  cgid=%s  totale=%d  pagine=%d", cgid, total, total_pages)
+        log.info("  cgid=%s  totale=%d", cgid, total)
 
+        # Paginazione via Search-UpdateGrid (HTML): contiene le immagini
+        # prodotto, a differenza di Search-ShowAjax (JSON, senza immagini).
+        # UpdateGrid restituisce un numero variabile di prodotti per chiamata
+        # (start=0 ne dà ~10), quindi avanziamo di quanti ne ha resi davvero.
         grand_total = 0
-        for page_num in range(total_pages):
-            # Tutte le pagine via endpoint AJAX (JSON), incluso start=0.
-            # La pagina categoria HTML serve solo per cgid+total (_get_grid_info).
-            ajax_data = await self._get_json(
-                AJAX_URL,
-                params={"cgid": cgid, "start": page_num * PAGE_SIZE, "sz": PAGE_SIZE},
+        start = 0
+        seen = 0
+        empty_streak = 0
+        max_iter = total // 8 + 50  # salvagente anti-loop
+        for _ in range(max_iter):
+            if seen >= total:
+                break
+            grid_html = await self._get(
+                UPDATEGRID_URL,
+                params={"cgid": cgid, "start": start, "sz": GRID_PAGE_SIZE},
             )
-            if not ajax_data:
-                log.warning(
-                    "Pagina %d non ottenuta per %s, salto", page_num + 1, slug
-                )
+            products = self._parse_products(grid_html) if grid_html else []
+            if not products:
+                empty_streak += 1
+                if empty_streak >= 2:
+                    break
+                start += GRID_PAGE_SIZE
                 continue
-            products = self._parse_ajax_products(ajax_data)
+            empty_streak = 0
             try:
                 page_count = await self._upsert_products_batch(products, store_uuid)
             except Exception as exc:
-                log.warning(
-                    "Errore batch %s pagina %d: %s", slug, page_num + 1, exc
-                )
+                log.warning("Errore batch %s start=%d: %s", slug, start, exc)
                 page_count = 0
 
             grand_total += page_count
-            if (page_num + 1) % 5 == 0 or (page_num + 1) == total_pages:
+            start += len(products)
+            seen += len(products)
+            if seen % 200 < len(products) or seen >= total:
                 log.info(
-                    "  pagina %d/%d — questa: %d  totale: %d",
-                    page_num + 1,
-                    total_pages,
-                    page_count,
-                    grand_total,
+                    "  %s: %d/%d esaminati — totale scritti: %d",
+                    slug, seen, total, grand_total,
                 )
 
         return grand_total
