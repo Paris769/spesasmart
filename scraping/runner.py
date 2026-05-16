@@ -25,6 +25,7 @@ from .spiders.iper_spider import IperSpider
 from .spiders.famila_spider import FamilaSpider
 from .spiders.cosicomodo_spider import CosiComodoSpider
 from .enrich_images import enrich_images
+from .dedup_products import dedup
 
 logging.basicConfig(
     level=logging.INFO,
@@ -142,8 +143,10 @@ async def main(args: argparse.Namespace) -> None:
             [args.chain]
             if args.chain != "all"
             # 'cosicomodo' escluso dal run 'all': spider non funzionante
-            # (manca mappatura negozio→baseSiteId, vedi cosicomodo_spider.py)
-            else ["esselunga", "conad", "carrefour", "eurospin", "iper", "famila"]
+            # (manca mappatura negozio→baseSiteId, vedi cosicomodo_spider.py).
+            # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
+            else ["esselunga", "conad", "carrefour", "eurospin", "iper",
+                  "famila", "dedup"]
         )
 
         for chain in chains:
@@ -167,6 +170,9 @@ async def main(args: argparse.Namespace) -> None:
             elif chain == "images":
                 # Arricchimento immagini mancanti da Open Food Facts
                 await enrich_images(conn, dry_run=args.dry_run)
+            elif chain == "dedup":
+                # Unisce i prodotti duplicati tra catene (--dry-run = anteprima)
+                await dedup(conn, apply=not args.dry_run)
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -177,7 +183,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "images", "all"],
+        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "images", "dedup", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )

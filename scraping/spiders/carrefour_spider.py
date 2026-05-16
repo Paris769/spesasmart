@@ -304,11 +304,18 @@ class CarrefourSpider:
                 self._parse_unit_price(unit_el.get_text()) if unit_el else None
             )
 
-            # Immagine — rende assoluto l'URL se relativo
+            # Immagine — src/data-src, con fallback su srcset: le tile sono
+            # lazy-load e su ~5% dei prodotti src/data-src non sono valorizzati
+            # mentre srcset contiene comunque l'URL reale.
             img_el = item.select_one(".tile-image")
             image_url: str | None = None
             if img_el:
-                image_url = img_el.get("src") or img_el.get("data-src") or None
+                image_url = img_el.get("src") or img_el.get("data-src")
+                if not image_url:
+                    srcset = img_el.get("srcset") or img_el.get("data-srcset")
+                    if srcset:
+                        # "url1 1x, url2 2x" → primo URL
+                        image_url = srcset.strip().split(",")[0].strip().split(" ")[0]
             if image_url and image_url.startswith("/"):
                 image_url = BASE_URL + image_url
 
