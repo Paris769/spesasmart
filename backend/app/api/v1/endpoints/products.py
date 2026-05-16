@@ -48,16 +48,20 @@ async def search_products(
         filters.append("p.category_id = :category_id")
         params["category_id"] = category_id
 
-    # Filtro geografico opzionale per il prezzo mostrato nei risultati:
-    # se è fornita la posizione mostra il prezzo minimo entro il raggio,
-    # altrimenti il prezzo minimo nazionale (così un prezzo si vede sempre).
+    # Filtro geografico opzionale per il prezzo mostrato nei risultati.
+    # I negozi con consegna a domicilio (spesa online) sono nazionali:
+    # restano sempre visibili a prescindere dal raggio. Il raggio filtra
+    # solo i punti vendita fisici (click & collect).
     price_geo = ""
     if lat is not None and lng is not None:
         price_geo = """
-              AND ST_DWithin(
-                    s.coordinates::geography,
-                    ST_Point(:lng, :lat)::geography,
-                    :radius_m
+              AND (
+                    s.has_delivery = TRUE
+                    OR ST_DWithin(
+                         s.coordinates::geography,
+                         ST_Point(:lng, :lat)::geography,
+                         :radius_m
+                       )
                   )"""
         params["lat"] = lat
         params["lng"] = lng
@@ -137,10 +141,13 @@ async def get_product_prices(
             WHERE p.product_id = :product_id
               AND p.is_current  = TRUE
               AND s.is_active   = TRUE
-              AND ST_DWithin(
-                    s.coordinates::geography,
-                    ST_Point(:lng, :lat)::geography,
-                    :radius_m
+              AND (
+                    s.has_delivery = TRUE
+                    OR ST_DWithin(
+                         s.coordinates::geography,
+                         ST_Point(:lng, :lat)::geography,
+                         :radius_m
+                       )
                   )
             ORDER BY p.price ASC
             LIMIT 30
