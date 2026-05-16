@@ -39,6 +39,10 @@ export interface Product {
   image_url: string | null;
   unit: string | null;
   unit_quantity: number | null;
+  /** Prezzo minimo corrente (entro il raggio se la posizione è attiva). */
+  min_price?: number | null;
+  /** Numero di negozi con un prezzo corrente per questo prodotto. */
+  price_store_count?: number | null;
 }
 
 export interface PriceResult {
@@ -61,9 +65,16 @@ export interface PriceResult {
 
 // ── API calls ────────────────────────────────────────────────────────────────
 
-export const searchProducts = (q: string) =>
+export const searchProducts = (
+  q: string,
+  lat?: number,
+  lng?: number,
+  radiusKm?: number
+) =>
   api
-    .get<Product[]>("/products/search", { params: { q, limit: 100 } })
+    .get<Product[]>("/products/search", {
+      params: { q, limit: 100, lat, lng, radius_km: radiusKm },
+    })
     .then((r) => r.data);
 
 export const getProductPrices = (

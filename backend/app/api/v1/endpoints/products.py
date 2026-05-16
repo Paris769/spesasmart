@@ -12,6 +12,9 @@ async def search_products(
     q: Optional[str] = Query(None, min_length=2),
     barcode: Optional[str] = Query(None),
     category_id: Optional[int] = Query(None),
+    lat: Optional[float] = Query(None),
+    lng: Optional[float] = Query(None),
+    radius_km: float = Query(5.0, ge=0.5, le=50),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     db: AsyncSession = Depends(get_db),
@@ -42,35 +45,62 @@ async def search_products(
     }
 
     if category_id:
-        filters.append("category_id = :category_id")
+        filters.append("p.category_id = :category_id")
         params["category_id"] = category_id
+
+    # Filtro geografico opzionale per il prezzo mostrato nei risultati:
+    # se è fornita la posizione mostra il prezzo minimo entro il raggio,
+    # altrimenti il prezzo minimo nazionale (così un prezzo si vede sempre).
+    price_geo = ""
+    if lat is not None and lng is not None:
+        price_geo = """
+              AND ST_DWithin(
+                    s.coordinates::geography,
+                    ST_Point(:lng, :lat)::geography,
+                    :radius_m
+                  )"""
+        params["lat"] = lat
+        params["lng"] = lng
+        params["radius_m"] = radius_km * 1000
 
     where = " AND ".join(filters)
     result = await db.execute(
         text(f"""
-            SELECT *,
+            SELECT p.*,
                    CASE
-                       WHEN lower(name) = :q_lower                  THEN 4
-                       WHEN lower(name) LIKE :q_lower_start         THEN 3
-                       WHEN lower(name) LIKE :q_lower_mid
-                         OR lower(name) LIKE :q_lower_end           THEN 2
+                       WHEN lower(p.name) = :q_lower                THEN 4
+                       WHEN lower(p.name) LIKE :q_lower_start       THEN 3
+                       WHEN lower(p.name) LIKE :q_lower_mid
+                         OR lower(p.name) LIKE :q_lower_end         THEN 2
                        ELSE 1
                    END AS word_rank,
                    ts_rank(
-                       to_tsvector('simple', lower(name)),
+                       to_tsvector('simple', lower(p.name)),
                        plainto_tsquery('simple', :q_tsquery)
-                   ) AS ts_score
-            FROM products
+                   ) AS ts_score,
+                   pr.min_price,
+                   pr.store_count AS price_store_count
+            FROM products p
+            LEFT JOIN LATERAL (
+                SELECT MIN(x.price)            AS min_price,
+                       COUNT(DISTINCT x.store_id) AS store_count
+                FROM prices x
+                JOIN stores s ON x.store_id = s.id
+                WHERE x.product_id = p.id
+                  AND x.is_current = TRUE
+                  AND s.is_active  = TRUE
+                  {price_geo}
+            ) pr ON TRUE
             WHERE {where} AND (
-                to_tsvector('simple', lower(name || ' ' || COALESCE(brand, '')))
+                to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
                     @@ plainto_tsquery('simple', :q_tsquery)
-                OR name ILIKE :q_like
-                OR brand ILIKE :q_like
+                OR p.name ILIKE :q_like
+                OR p.brand ILIKE :q_like
             )
             ORDER BY
                 word_rank DESC,
                 ts_score   DESC,
-                similarity(name, :q) DESC
+                similarity(p.name, :q) DESC
             LIMIT :limit OFFSET :offset
         """),
         params,
