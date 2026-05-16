@@ -24,6 +24,7 @@ from .spiders.eurospin_spider import EurospinSpider
 from .spiders.iper_spider import IperSpider
 from .spiders.famila_spider import FamilaSpider
 from .spiders.cosicomodo_spider import CosiComodoSpider
+from .enrich_images import enrich_images
 
 logging.basicConfig(
     level=logging.INFO,
@@ -163,6 +164,9 @@ async def main(args: argparse.Namespace) -> None:
                 async with httpx.AsyncClient() as client:
                     spider = CosiComodoSpider(client, conn, dry_run=args.dry_run)
                     await spider.scrape_prices()
+            elif chain == "images":
+                # Arricchimento immagini mancanti da Open Food Facts
+                await enrich_images(conn, dry_run=args.dry_run)
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -173,7 +177,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "all"],
+        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "images", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
