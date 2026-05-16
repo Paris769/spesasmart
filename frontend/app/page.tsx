@@ -20,8 +20,9 @@ export default function HomePage() {
   }, [query, selectedProduct]);
 
   const { data: products, isFetching: searching } = useQuery({
-    queryKey: ["search", debouncedQuery],
-    queryFn: () => searchProducts(debouncedQuery),
+    queryKey: ["search", debouncedQuery, location, radiusKm],
+    queryFn: () =>
+      searchProducts(debouncedQuery, location?.lat, location?.lng, radiusKm),
     enabled: debouncedQuery.length >= 2 && !selectedProduct,
     staleTime: 30_000,
   });
@@ -72,13 +73,29 @@ export default function HomePage() {
                   onClick={() => { setSelectedProduct(p); setQuery(p.name); }}
                   className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3"
                 >
-                  {p.image_url && (
+                  {p.image_url ? (
                     <img src={p.image_url} alt={p.name} className="w-10 h-10 object-contain rounded shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded shrink-0 bg-gray-100 flex items-center justify-center text-gray-300 text-lg">
+                      🛒
+                    </div>
                   )}
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <p className="font-medium text-gray-900 text-sm">{p.name}</p>
                     {p.brand && <p className="text-xs text-gray-500">{p.brand}</p>}
                   </div>
+                  {p.min_price != null && (
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-primary">
+                        €{Number(p.min_price).toFixed(2)}
+                      </p>
+                      {p.price_store_count ? (
+                        <p className="text-[10px] text-gray-400">
+                          {p.price_store_count} negoz{p.price_store_count > 1 ? "i" : "io"}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
                 </button>
               </li>
             ))}
