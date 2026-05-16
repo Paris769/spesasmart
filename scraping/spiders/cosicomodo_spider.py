@@ -38,23 +38,26 @@ log = logging.getLogger("cosicomodo")
 
 API_BASE = "https://api.cosicomodo.it/occ/v2"
 IMG_BASE = "https://images.cosicomodo.it"
-CHAIN_SLUG = "famila"
 PAGE_SIZE = 100
 RATE = 0.4           # secondi tra richieste (l'API pubblica non throttla forte)
 
-# Negozi scrapati per esecuzione. 74 negozi a catalogo pieno non stanno nei
-# 90 min di CI: se ne fa un sottoinsieme a rotazione (seed = giorno) così
+# Negozi scrapati per esecuzione. A catalogo pieno tutti i negozi non stanno
+# nei 90 min di CI: se ne fa un sottoinsieme a rotazione (seed = giorno) così
 # nell'arco di pochi run si coprono tutti. Override: COSICOMODO_MAX_STORES.
 MAX_STORES = int(os.getenv("COSICOMODO_MAX_STORES", "10"))
 
 # Codici categoria top-level (reparti CosìComodo: /c/10001 … /c/10016)
 CATEGORY_CODES = [str(c) for c in range(10001, 10017)]
 
-# File con la lista negozi (site, alias, lat, lng)
-_STORES_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "cosicomodo_famila_stores.json",
-)
+# Catene servite da CosìComodo (slug → nome visualizzato)
+CHAIN_NAMES = {
+    "famila": "Famila",
+    "ilgigante": "Il Gigante",
+    "italmark": "Italmark",
+}
+
+# Directory con i file negozi: cosicomodo_{chain}_stores.json
+_SCRAPING_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 HEADERS = {
     "User-Agent": (
@@ -70,8 +73,22 @@ HEADERS = {
 
 
 def _load_stores() -> list[dict]:
-    with open(_STORES_FILE, encoding="utf-8") as fh:
-        return json.load(fh)
+    """
+    Carica tutti i file cosicomodo_{chain}_stores.json e tagga ogni negozio
+    con la catena (ricavata dal nome del file).
+    """
+    import glob
+
+    stores: list[dict] = []
+    pattern = os.path.join(_SCRAPING_DIR, "cosicomodo_*_stores.json")
+    for path in sorted(glob.glob(pattern)):
+        fname = os.path.basename(path)
+        chain = fname[len("cosicomodo_"):-len("_stores.json")]
+        with open(path, encoding="utf-8") as fh:
+            for s in json.load(fh):
+                s["chain"] = chain
+                stores.append(s)
+    return stores
 
 
 class CosiComodoSpider:
@@ -118,11 +135,14 @@ class CosiComodoSpider:
 
     # ── Store DB upsert ───────────────────────────────────────────────────────
 
-    async def _ensure_store(self, chain_id: int, store: dict) -> Optional[str]:
-        """Upsert del punto vendita Famila nel DB. Ritorna lo store uuid."""
+    async def _ensure_store(
+        self, chain_id: int, chain_slug: str, store: dict
+    ) -> Optional[str]:
+        """Upsert del punto vendita nel DB. Ritorna lo store uuid."""
         alias = store["alias"]
-        external_id = f"famila-{alias}"
-        name = "Famila " + alias.replace("-", " ").title()
+        external_id = f"{chain_slug}-{alias}"
+        chain_name = CHAIN_NAMES.get(chain_slug, chain_slug.title())
+        name = f"{chain_name} " + alias.replace("-", " ").title()
         city = alias.split("-")[0].replace("_", " ").title()
 
         row = await self.conn.fetchrow(
@@ -349,28 +369,35 @@ class CosiComodoSpider:
     # ── Entry point ───────────────────────────────────────────────────────────
 
     async def scrape_prices(self) -> int:
-        chain_id = await self.conn.fetchval(
-            "SELECT id FROM chains WHERE slug = $1", CHAIN_SLUG
-        )
-        if not chain_id:
-            log.error("Chain '%s' non trovata nel DB", CHAIN_SLUG)
-            return 0
+        # chain_id per ogni catena CosìComodo presente
+        chain_ids: dict[str, int] = {}
+        for slug in {s["chain"] for s in self._stores}:
+            cid = await self.conn.fetchval(
+                "SELECT id FROM chains WHERE slug = $1", slug
+            )
+            if cid:
+                chain_ids[slug] = cid
+            else:
+                log.warning("Chain '%s' non trovata nel DB — negozi saltati", slug)
 
         # Sottoinsieme a rotazione: i negozi scrapati cambiano ogni giorno,
         # così in pochi run si copre l'intera rete senza sforare il timeout.
-        stores = list(self._stores)
+        stores = [s for s in self._stores if s["chain"] in chain_ids]
         if 0 < MAX_STORES < len(stores):
             import datetime
             rnd = random.Random(datetime.date.today().toordinal())
             rnd.shuffle(stores)
             stores = stores[:MAX_STORES]
         log.info(
-            "Negozi Famila da scrapare: %d (su %d totali)",
+            "Negozi CosìComodo da scrapare: %d (su %d totali)",
             len(stores), len(self._stores),
         )
         total = 0
         for i, store in enumerate(stores, start=1):
-            store_uuid = await self._ensure_store(chain_id, store)
+            chain_slug = store["chain"]
+            store_uuid = await self._ensure_store(
+                chain_ids[chain_slug], chain_slug, store
+            )
             if not store_uuid:
                 continue
             site, alias = store["site"], store["alias"]
@@ -386,8 +413,9 @@ class CosiComodoSpider:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("  errore categoria %s: %s", code, exc)
             log.info(
-                "[%d/%d] Famila %s (%s): %d prezzi",
-                i, len(stores), alias, site, store_total,
+                "[%d/%d] %s %s (%s): %d prezzi",
+                i, len(stores), CHAIN_NAMES.get(chain_slug, chain_slug),
+                alias, site, store_total,
             )
             total += store_total
 

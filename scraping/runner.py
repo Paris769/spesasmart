@@ -50,6 +50,8 @@ _CHAINS_SEED = [
     ("MD",        "md",        False, None,                                                      "none"),
     ("Iper",      "iper",      False, None,                                                      "none"),
     ("Famila",    "famila",    True,  "https://www.cosicomodo.it/famila",                       "api"),
+    ("Il Gigante", "ilgigante", True, "https://www.cosicomodo.it/ilgigante",                    "api"),
+    ("Italmark",  "italmark",  True,  "https://www.cosicomodo.it/italmark",                     "api"),
 ]
 
 

@@ -1,0 +1,17 @@
+[
+ {"site": "italmark", "alias": "soresina-biasini", "lat": 45.28746, "lng": 9.87571},
+ {"site": "italmark", "alias": "orzinuovi-adua", "lat": 45.40929, "lng": 9.93087},
+ {"site": "italmark", "alias": "chiari", "lat": 45.54195, "lng": 9.93845},
+ {"site": "italmark", "alias": "palazzolo", "lat": 45.58883, "lng": 9.89098},
+ {"site": "italmark", "alias": "palazzolo-oglio-san-pancrazio", "lat": 45.60366, "lng": 9.89721},
+ {"site": "italmark", "alias": "verolanuova-circonvallazione", "lat": 45.33321, "lng": 10.08084},
+ {"site": "italmark", "alias": "azzano-mella-niga", "lat": 45.45766, "lng": 10.10828},
+ {"site": "italmark", "alias": "capriolo", "lat": 45.62881, "lng": 9.94612},
+ {"site": "italmark", "alias": "ospitaletto-padana-superiore", "lat": 45.55564, "lng": 10.09037},
+ {"site": "italmark", "alias": "castel-mella-oriana-fallaci", "lat": 45.52011, "lng": 10.14821},
+ {"site": "italmark", "alias": "flero", "lat": 45.47163, "lng": 10.17523},
+ {"site": "italmark", "alias": "gussago-paolo-richiedei", "lat": 45.58801, "lng": 10.15464},
+ {"site": "italmark", "alias": "brescia-cefalonia", "lat": 45.52518, "lng": 10.21611},
+ {"site": "italmark", "alias": "villanuova-sul-clisi", "lat": 45.54945, "lng": 10.20645},
+ {"site": "italmark", "alias": "ghedi-costa", "lat": 45.39450, "lng": 10.27207}
+]
