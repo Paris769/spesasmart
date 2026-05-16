@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 import asyncpg
 import httpx
 
+from ..ean import canonical_ean
+
 log = logging.getLogger("conad")
 
 BASE_URL = "https://spesaonline.conad.it"
@@ -48,6 +50,8 @@ _CONAD_LAT = 44.4939
 # Regex per estrarre tutti i data-product dall'HTML
 _PRODUCT_RE = re.compile(r'data-product="([^"]+)"')
 _TOTAL_RE = re.compile(r"(\d+)\s+risultati")
+# EAN reale dal JSON-LD della pagina dettaglio prodotto ("gtin"/"gtin13")
+_EAN_RE = re.compile(r'"gtin\d*"\s*:\s*"(\d+)"')
 
 
 class ConadSpider:
@@ -61,6 +65,7 @@ class ConadSpider:
         self.conn = conn
         self.dry_run = dry_run
         self._t_last = 0.0
+        self._ean_cache: dict[str, str | None] = {}
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -99,6 +104,45 @@ class ConadSpider:
                 log.warning("Tentativo %d errore: %s", attempt + 1, exc)
             await asyncio.sleep(2 ** attempt)
         return None
+
+    async def _get_detail(self, code: str) -> str | None:
+        """Scarica la pagina dettaglio prodotto (lo slug è irrilevante:
+        Conad reindirizza alla pagina canonica dal solo codice)."""
+        await self._throttle()
+        url = f"{BASE_URL}/p/x--{code}"
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                r = await self.client.get(
+                    url, headers=HEADERS, timeout=30, follow_redirects=True
+                )
+                if r.status_code == 200:
+                    return r.text
+                if r.status_code in (403, 404):
+                    return None
+                if r.status_code == 429:
+                    await asyncio.sleep(RETRY_429_SLEEP)
+                    continue
+            except httpx.RequestError as exc:
+                log.warning("Dettaglio %s tentativo %d errore: %s", code, attempt + 1, exc)
+            await asyncio.sleep(2 ** attempt)
+        return None
+
+    async def _fetch_ean(self, code: str) -> str | None:
+        """
+        Recupera l'EAN reale dalla pagina dettaglio Conad (JSON-LD `gtin`).
+        Permette di unire i prodotti Conad con le altre catene per barcode.
+        Best-effort: in caso di errore ritorna None (fallback `conad-{code}`).
+        """
+        if code in self._ean_cache:
+            return self._ean_cache[code]
+        ean: str | None = None
+        page = await self._get_detail(code)
+        if page:
+            m = _EAN_RE.search(page)
+            if m:
+                ean = canonical_ean(m.group(1))
+        self._ean_cache[code] = ean
+        return ean
 
     # ------------------------------------------------------------------
     # Store management
@@ -215,7 +259,10 @@ class ConadSpider:
             return False
 
         brand = (p.get("marchio") or "").strip() or None
-        barcode = f"conad-{code}"
+        # EAN reale dalla pagina dettaglio → permette il merge cross-catena.
+        # Fallback al codice sintetico se l'EAN non è recuperabile.
+        ean = await self._fetch_ean(code)
+        barcode = ean or f"conad-{code}"
 
         # Costruisci URL immagine (le list page hanno già l'URL completo)
         img = p.get("defaultImgSrc") or ""
