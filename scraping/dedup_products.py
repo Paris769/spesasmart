@@ -209,45 +209,70 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
         return len(merges)
 
     # ── Applicazione (transazione) ───────────────────────────────────────────
+    # Re-pointing in BLOCCO: invece di ~6 statement per gruppo (col catalogo
+    # attuale ≈45.000 query, che sforano lo statement timeout del DB), un solo
+    # UPDATE per tabella FK con join su unnest(). Da decine di migliaia di
+    # query si scende a una manciata.
+    dupe_arr: list = []          # id duplicati, paralleli a surv_arr
+    surv_arr: list = []          # id superstite per ciascun duplicato
     survivor_ids: list = []
-    merged = 0
+    barcode_upd: list[tuple] = []   # (survivor_id, ean) — EAN ereditato
+    image_upd: list[tuple] = []     # (survivor_id, image_url) — immagine ereditata
+    for g in merges:
+        survivor = _pick_survivor(g)
+        survivor_ids.append(survivor["id"])
+        for p in g:
+            if p["id"] != survivor["id"]:
+                dupe_arr.append(p["id"])
+                surv_arr.append(survivor["id"])
+        if not survivor["_ean"]:
+            real = next((p["_ean"] for p in g if p["_ean"]), None)
+            if real:
+                barcode_upd.append((survivor["id"], real))
+        if not survivor["image_url"]:
+            img = next((p["image_url"] for p in g if p["image_url"]), None)
+            if img:
+                image_upd.append((survivor["id"], img))
+
+    # gli UPDATE in blocco toccano tabelle grandi (prices): timeout generoso
+    await conn.execute("SET statement_timeout = '600s'")
+
+    merged = len(dupe_arr)
     async with conn.transaction():
-        for g in merges:
-            survivor = _pick_survivor(g)
-            dupes = [p["id"] for p in g if p["id"] != survivor["id"]]
-            survivor_ids.append(survivor["id"])
-
-            # ri-punta ogni FK verso products dai duplicati al superstite
-            for table, col in fk_cols:
-                await conn.execute(
-                    f"UPDATE {table} SET {col} = $1 "
-                    f"WHERE {col} = ANY($2::uuid[])",
-                    survivor["id"], dupes,
-                )
-
-            # il superstite eredita un EAN reale, se ne esiste uno nel gruppo
-            if not survivor["_ean"]:
-                real = next((p["_ean"] for p in g if p["_ean"]), None)
-                if real:
-                    await conn.execute(
-                        "UPDATE products SET barcode = $1 WHERE id = $2",
-                        real, survivor["id"],
-                    )
-            # il superstite eredita un'immagine, se gli manca
-            if not survivor["image_url"]:
-                img = next(
-                    (p["image_url"] for p in g if p["image_url"]), None
-                )
-                if img:
-                    await conn.execute(
-                        "UPDATE products SET image_url = $1 WHERE id = $2",
-                        img, survivor["id"],
-                    )
-
+        # 1. ri-punta ogni FK verso products dai duplicati al superstite
+        for table, col in fk_cols:
             await conn.execute(
-                "DELETE FROM products WHERE id = ANY($1::uuid[])", dupes
+                f"""UPDATE {table} AS t SET {col} = m.survivor
+                    FROM unnest($1::uuid[], $2::uuid[]) AS m(dupe, survivor)
+                    WHERE t.{col} = m.dupe""",
+                dupe_arr, surv_arr,
             )
-            merged += len(dupes)
+
+        # 2. elimina i duplicati (prima degli UPDATE barcode: così il
+        #    superstite può ereditare un EAN senza collidere col duplicato)
+        await conn.execute(
+            "DELETE FROM products WHERE id = ANY($1::uuid[])", dupe_arr
+        )
+
+        # 3. il superstite eredita un EAN reale, se gli manca
+        if barcode_upd:
+            await conn.execute(
+                """UPDATE products AS p SET barcode = v.ean
+                   FROM unnest($1::uuid[], $2::text[]) AS v(id, ean)
+                   WHERE p.id = v.id""",
+                [b[0] for b in barcode_upd],
+                [b[1] for b in barcode_upd],
+            )
+
+        # 4. il superstite eredita un'immagine, se gli manca
+        if image_upd:
+            await conn.execute(
+                """UPDATE products AS p SET image_url = v.img
+                   FROM unnest($1::uuid[], $2::text[]) AS v(id, img)
+                   WHERE p.id = v.id""",
+                [b[0] for b in image_upd],
+                [b[1] for b in image_upd],
+            )
 
         # dopo il re-pointing un superstite può avere più prezzi is_current
         # per lo stesso negozio: tiene corrente solo il più recente.
