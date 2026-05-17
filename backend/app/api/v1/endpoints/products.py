@@ -202,7 +202,7 @@ async def get_product_prices(
                 s.address, s.city, s.has_delivery, s.has_click_collect,
                 c.name  AS chain_name,
                 c.slug  AS chain_slug,
-                c.shop_url,
+                COALESCE(p.product_url, c.shop_url) AS shop_url,
                 (s.external_id LIKE '%-online') AS is_online,
                 CASE
                     WHEN s.external_id LIKE '%-online' THEN NULL

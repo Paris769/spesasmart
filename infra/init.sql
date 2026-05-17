@@ -81,6 +81,7 @@ CREATE TABLE prices (
     in_stock        BOOLEAN DEFAULT TRUE,
     is_current      BOOLEAN DEFAULT TRUE,
     source          VARCHAR(30),
+    product_url     TEXT,               -- link diretto alla pagina prodotto sul sito della catena
     scraped_at      TIMESTAMPTZ DEFAULT NOW()
 );
 

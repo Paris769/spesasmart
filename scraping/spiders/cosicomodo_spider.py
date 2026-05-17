@@ -235,6 +235,7 @@ class CosiComodoSpider:
                 pass
         return {
             "barcode": canonical_ean(raw_code) or raw_code,
+            "_raw_code": raw_code,   # codice OCC reale, per il link prodotto
             "name": name,
             "brand": str(p.get("marca") or "").strip() or None,
             "image_url": self._extract_image(p),
@@ -246,7 +247,7 @@ class CosiComodoSpider:
         }
 
     async def _upsert_products_batch(
-        self, products: list[dict], store_uuid: str
+        self, products: list[dict], store_uuid: str, chain_slug: str
     ) -> int:
         """
         Upsert di una pagina di prodotti in ~5 round-trip DB invece di 4 per
@@ -257,6 +258,12 @@ class CosiComodoSpider:
         for raw in products:
             n = self._normalize(raw)
             if n:
+                # link diretto alla scheda prodotto sul sito CosìComodo
+                # (lo slug catena coincide col path del sito: famila, …)
+                n["product_url"] = (
+                    f"https://www.cosicomodo.it/{chain_slug}"
+                    f"/p/{n['_raw_code']}"
+                )
                 by_bc[n["barcode"]] = n
         if not by_bc:
             return 0
@@ -314,12 +321,13 @@ class CosiComodoSpider:
             await self.conn.execute(
                 """INSERT INTO prices
                        (product_id, store_id, price, original_price, promo_label,
-                        price_per_unit, in_stock, is_current, source, scraped_at)
+                        price_per_unit, in_stock, is_current, source,
+                        product_url, scraped_at)
                    SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu, v.instock,
-                          TRUE, 'cosicomodo', NOW()
+                          TRUE, 'cosicomodo', v.url, NOW()
                    FROM unnest($1::uuid[], $3::numeric[], $4::numeric[], $5::text[],
-                               $6::numeric[], $7::boolean[])
-                        AS v(id, price, orig, promo, ppu, instock)""",
+                               $6::numeric[], $7::boolean[], $8::text[])
+                        AS v(id, price, orig, promo, ppu, instock, url)""",
                 all_ids,
                 store_uuid,
                 [by_bc[b]["price"] for b in barcodes],
@@ -327,11 +335,13 @@ class CosiComodoSpider:
                 [by_bc[b]["promo_label"] for b in barcodes],
                 [by_bc[b]["price_per_unit"] for b in barcodes],
                 [by_bc[b]["in_stock"] for b in barcodes],
+                [by_bc[b]["product_url"] for b in barcodes],
             )
         return len(barcodes)
 
     async def _scrape_category(
-        self, site: str, alias: str, category_code: str, store_uuid: str
+        self, site: str, alias: str, category_code: str, store_uuid: str,
+        chain_slug: str,
     ) -> int:
         """Scarica tutte le pagine di una categoria. Ritorna i prezzi scritti."""
         url = (
@@ -357,7 +367,9 @@ class CosiComodoSpider:
             total_pages = (data.get("pagination") or {}).get("totalPages", 1)
             products = data.get("products") or []
             try:
-                upserted += await self._upsert_products_batch(products, store_uuid)
+                upserted += await self._upsert_products_batch(
+                    products, store_uuid, chain_slug
+                )
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "Errore batch %s/%s cat=%s pag=%d: %s",
@@ -408,7 +420,7 @@ class CosiComodoSpider:
             for code in CATEGORY_CODES:
                 try:
                     store_total += await self._scrape_category(
-                        site, alias, code, store_uuid
+                        site, alias, code, store_uuid, chain_slug
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("  errore categoria %s: %s", code, exc)

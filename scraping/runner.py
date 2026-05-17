@@ -77,6 +77,16 @@ async def ensure_chains(conn: asyncpg.Connection) -> None:
         )
 
 
+async def ensure_schema(conn: asyncpg.Connection) -> None:
+    """
+    Migrazioni idempotenti dello schema: colonne aggiunte dopo il deploy
+    iniziale. Eseguite a ogni run, innocue se già applicate.
+    """
+    await conn.execute(
+        "ALTER TABLE prices ADD COLUMN IF NOT EXISTS product_url TEXT"
+    )
+
+
 async def run_esselunga(conn: asyncpg.Connection, dry_run: bool, discover_only: bool) -> None:
     async with httpx.AsyncClient() as client:
         spider = EsselungaSpider(client, conn, dry_run=dry_run or discover_only)
@@ -151,6 +161,7 @@ async def main(args: argparse.Namespace) -> None:
 
     conn = await asyncpg.connect(DB_URL)
     try:
+        await ensure_schema(conn)
         await ensure_chains(conn)
         chains = (
             [args.chain]
