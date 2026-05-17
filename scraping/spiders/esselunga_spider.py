@@ -1,13 +1,22 @@
 """
-Esselunga price scraper — nuova piattaforma spesaonline.esselunga.it/commerce/
+Esselunga price scraper — piattaforma spesaonline.esselunga.it/commerce/
 
 Flusso:
-  1. GET /commerce/nav/supermercato/store/home → sessione (cookie JSESSIONID)
-  2. POST /commerce/resources/search/facet     → discovery categorie dai facet
-  3. Per ogni categoria: paginazione completa  → upsert prodotti + prezzi
+  1. GET  /commerce/resources/route/v1/supermercato
+        → leftMenuItems: albero categorie completo (843 voci), da cui si
+          estraggono tutti i productSetId unici (~710).
+  2. POST /commerce/resources/displayable/productset
+        body {productSetIds:[…tutti…], length:100, start:N}
+        → catalogo completo paginato (rowCount ~25.000 prodotti).
+  3. Upsert prodotti + prezzi a batch (una transazione per pagina).
 
-Nota: Esselunga non espone prezzi per-negozio via API web; tutti i prezzi
-vengono associati a un negozio virtuale "Esselunga Online" (external_id=esselunga-online).
+L'API è PUBBLICA (nessun login, nessuna sessione). Esselunga non espone i
+prezzi per-negozio via web, quindi tutti i prezzi sono associati a un negozio
+virtuale "Esselunga Online" (external_id = esselunga-online).
+
+Storia: la vecchia API /commerce/resources/search/facet ora risponde HTTP 204.
+La nuova coppia route + productset è stata individuata via reverse-engineering
+del sito.
 """
 import asyncio
 import logging
@@ -20,10 +29,10 @@ import httpx
 log = logging.getLogger("esselunga")
 
 COMMERCE_BASE = "https://spesaonline.esselunga.it/commerce"
-SESSION_URL = f"{COMMERCE_BASE}/nav/supermercato/store/home"
-SEARCH_URL = f"{COMMERCE_BASE}/resources/search/facet"
-PAGE_SIZE = 50
-RATE = 1.5  # secondi tra una richiesta e l'altra
+ROUTE_URL = f"{COMMERCE_BASE}/resources/route/v1/supermercato"
+PRODUCTSET_URL = f"{COMMERCE_BASE}/resources/displayable/productset"
+PAGE_SIZE = 100      # il server limita la pagina a 100 entità
+RATE = 1.0           # secondi tra una richiesta e l'altra
 
 HEADERS = {
     "User-Agent": (
@@ -33,29 +42,12 @@ HEADERS = {
     ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "it-IT,it;q=0.9",
+    "Content-Type": "application/json",
     "Referer": "https://spesaonline.esselunga.it/",
     "X-PAGE-PATH": "supermercato",
 }
 
-# Keyword fallback se la discovery automatica delle categorie fallisce
-FALLBACK_QUERIES = [
-    "latte yogurt uova",
-    "pane pasta riso",
-    "carne salumi affettati",
-    "frutta verdura",
-    "pesce frutti mare",
-    "formaggi",
-    "bevande acqua succhi",
-    "snack biscotti cereali",
-    "surgelati",
-    "detersivi pulizia casa",
-    "cura persona shampoo",
-    "olio sale condimenti",
-    "vino birra alcolici",
-    "conserve sughi",
-]
-
-# Sede Esselunga (Milano) — usata come coordinate del negozio online virtuale
+# Sede Esselunga (Milano) — coordinate del negozio online virtuale
 _ESSELUNGA_LNG = 9.1859
 _ESSELUNGA_LAT = 45.4654
 
@@ -83,37 +75,39 @@ class EsselungaSpider:
             await asyncio.sleep(RATE - elapsed)
         self._t_last = loop.time()
 
-    async def _init_session(self) -> None:
-        """GET homepage per stabilire il cookie di sessione (JSESSIONID)."""
+    async def _get(self, url: str) -> dict | None:
         await self._throttle()
-        try:
-            r = await self.client.get(
-                SESSION_URL, headers=HEADERS, follow_redirects=True, timeout=30
-            )
-            has_cookie = bool(self.client.cookies)
-            log.info("Session init: HTTP %s (cookie: %s)", r.status_code,
-                     "ok" if has_cookie else "assente")
-        except httpx.RequestError as exc:
-            log.error("Session init fallita: %s", exc)
+        for attempt in range(3):
+            try:
+                r = await self.client.get(
+                    url, headers=HEADERS, follow_redirects=True, timeout=45
+                )
+                if r.status_code == 200:
+                    return r.json()
+                log.warning("GET HTTP %s tentativo %d — %s",
+                            r.status_code, attempt + 1, url)
+                if r.status_code in (401, 403, 404):
+                    return None
+            except (httpx.RequestError, ValueError) as exc:
+                log.warning("GET tentativo %d errore: %s", attempt + 1, exc)
+            await asyncio.sleep(2 ** attempt)
+        return None
 
-    async def _post(self, body: dict) -> dict | None:
-        """POST a SEARCH_URL con rate-limit e 3 tentativi."""
+    async def _post(self, url: str, body: dict) -> dict | None:
         await self._throttle()
         for attempt in range(3):
             try:
                 r = await self.client.post(
-                    SEARCH_URL, json=body, headers=HEADERS, timeout=30
+                    url, json=body, headers=HEADERS, timeout=45
                 )
                 if r.status_code == 200:
                     return r.json()
-                log.warning(
-                    "HTTP %s tentativo %d — %s",
-                    r.status_code, attempt + 1, r.text[:200],
-                )
+                log.warning("POST HTTP %s tentativo %d — %s",
+                            r.status_code, attempt + 1, r.text[:200])
                 if r.status_code in (401, 403, 404):
                     return None
-            except httpx.RequestError as exc:
-                log.warning("Tentativo %d errore: %s", attempt + 1, exc)
+            except (httpx.RequestError, ValueError) as exc:
+                log.warning("POST tentativo %d errore: %s", attempt + 1, exc)
             await asyncio.sleep(2 ** attempt)
         return None
 
@@ -126,10 +120,7 @@ class EsselungaSpider:
         return [{"id": "online", "name": "Esselunga Online", "type": "ecommerce"}]
 
     async def match_stores(self, es_stores: list[dict]) -> dict[str, str]:
-        """
-        Trova o crea lo store 'Esselunga Online' nel DB.
-        Ritorna {"online": uuid}.
-        """
+        """Trova o crea lo store 'Esselunga Online'. Ritorna {'online': uuid}."""
         row = await self.conn.fetchrow(
             """
             SELECT s.id
@@ -170,45 +161,28 @@ class EsselungaSpider:
         return {"online": str(new_id)}
 
     # ------------------------------------------------------------------
-    # Category discovery
+    # Category / productSet discovery
     # ------------------------------------------------------------------
 
-    async def _get_categories(self) -> list[str] | None:
+    async def _get_product_sets(self) -> list[int]:
         """
-        Recupera le categorie top-level dai facet della API.
-        Ritorna lista di categoryId, oppure None se non disponibili.
+        Estrae tutti i productSetId unici dall'albero categorie
+        (route/v1/supermercato → leftMenuItems).
         """
-        data = await self._post({"length": 1, "start": 0})
+        data = await self._get(ROUTE_URL)
         if not data:
-            return None
-
-        displayables = data.get("displayables") or {}
-        facets = displayables.get("facets") or []
-
-        for facet in facets:
-            if (facet.get("type") or "").upper() in ("CATEGORY", "CATEGORIA"):
-                cats = [
-                    f.get("value") or f.get("id") or f.get("name")
-                    for f in facet.get("filters", [])
-                ]
-                cats = [c for c in cats if c]
-                if cats:
-                    log.info("Trovate %d categorie dai facet (type match)", len(cats))
-                    return cats
-
-        # Fallback: il facet con più filtri è probabilmente quello delle categorie
-        best = max(facets, key=lambda f: len(f.get("filters", [])), default=None)
-        if best and len(best.get("filters", [])) > 3:
-            cats = [
-                f.get("value") or f.get("id")
-                for f in best["filters"]
-                if f.get("value") or f.get("id")
-            ]
-            if cats:
-                log.info("Trovate %d categorie dai facet (fallback by size)", len(cats))
-                return cats
-
-        return None
+            return []
+        menu_items = data.get("leftMenuItems") or []
+        sets: set[int] = set()
+        for item in menu_items:
+            for ps in item.get("menuItemProductSets") or []:
+                pk = ps.get("pk") or {}
+                sid = pk.get("productSetId")
+                if sid is not None:
+                    sets.add(int(sid))
+        log.info("Trovati %d productSet unici da %d voci di menu",
+                 len(sets), len(menu_items))
+        return sorted(sets)
 
     # ------------------------------------------------------------------
     # Parsing helpers
@@ -216,10 +190,7 @@ class EsselungaSpider:
 
     @staticmethod
     def _parse_unit_price(label: str | None) -> float | None:
-        """
-        Parsa il campo label: "1,65 € / l" → 1.65, "0,22 € / 100 g" → 2.20.
-        Normalizza sempre a per-kg (peso) o per-litro (volume).
-        """
+        """Parsa "1,65 € / l" → 1.65, "0,22 € / 100 g" → 2.20 (per-kg/per-litro)."""
         if not label:
             return None
         m = re.search(
@@ -255,35 +226,23 @@ class EsselungaSpider:
         if not promos:
             return None
         p = promos[0]
-        return (
-            p.get("label")
-            or p.get("description")
-            or p.get("title")
-            or str(p)[:50]
-        )
+        if isinstance(p, dict):
+            return (
+                p.get("label")
+                or p.get("description")
+                or p.get("title")
+                or str(p)[:50]
+            )
+        return str(p)[:50]
 
-    # ------------------------------------------------------------------
-    # DB upsert
-    # ------------------------------------------------------------------
-
-    async def _upsert_product_price(self, p: dict, store_uuid: str) -> bool:
-        """
-        Upsert prodotto e prezzo.
-        Usa barcode reale se presente, altrimenti sintetizza 'esselunga-{code}'.
-        Ritorna True se un prezzo è stato (o sarebbe stato) scritto.
-        """
+    def _normalize(self, p: dict) -> dict | None:
+        """Estrae i campi utili da un prodotto, o None se non valido."""
         code = str(p.get("code") or p.get("id") or "").strip()
         if not code:
-            return False
-
-        real_barcode = str(p.get("barcode") or "").strip() or None
-        barcode = real_barcode or f"esselunga-{code}"
-
+            return None
         name = (p.get("description") or "").strip()
         if not name:
-            return False
-        brand = (p.get("brand") or "").strip() or None
-        image_url = p.get("imageURL") or p.get("imageUrl") or None
+            return None
 
         # discountedPrice = prezzo attuale; price = prezzo di listino
         raw_current = p.get("discountedPrice")
@@ -291,125 +250,173 @@ class EsselungaSpider:
         if raw_current is None:
             raw_current = raw_original
             raw_original = None
-
         try:
             current_price = float(raw_current)
-            original_price = float(raw_original) if raw_original is not None else None
+            original_price = (
+                float(raw_original) if raw_original is not None else None
+            )
         except (ValueError, TypeError):
-            return False
-
+            return None
         if current_price <= 0:
-            return False
-
-        # original_price ha senso solo se c'è effettivamente uno sconto
+            return None
+        # original ha senso solo se c'è davvero uno sconto
         if original_price is not None and original_price <= current_price:
             original_price = None
 
-        price_per_unit = self._parse_unit_price(p.get("label"))
-        promo_label = self._extract_promo(p)
-        in_stock = not bool(p.get("outOfStock", False))
-
-        if self.dry_run:
-            log.info(
-                "[DRY] %-50s  €%.2f%s",
-                name[:50],
-                current_price,
-                f"  (era €{original_price:.2f})" if original_price else "",
-            )
-            return True
-
-        # Upsert prodotto
-        prod_id = await self.conn.fetchval(
-            "SELECT id FROM products WHERE barcode = $1 LIMIT 1",
-            barcode,
-        )
-        if prod_id is None:
-            prod_id = await self.conn.fetchval(
-                """
-                INSERT INTO products (barcode, name, brand, image_url, source)
-                VALUES ($1, $2, $3, $4, 'esselunga_web')
-                RETURNING id
-                """,
-                barcode, name, brand, image_url,
-            )
-        else:
-            await self.conn.execute(
-                """
-                UPDATE products
-                SET name = $2,
-                    brand = COALESCE($3, brand),
-                    image_url = COALESCE($4, image_url),
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
-                prod_id, name, brand, image_url,
-            )
-
-        # Invalida prezzi precedenti e inserisce il nuovo
-        await self.conn.execute(
-            "UPDATE prices SET is_current = FALSE WHERE product_id = $1 AND store_id = $2",
-            prod_id, store_uuid,
-        )
-        await self.conn.execute(
-            """
-            INSERT INTO prices
-                (product_id, store_id, price, original_price, promo_label,
-                 price_per_unit, in_stock, is_current, source, scraped_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, 'esselunga_web', $8)
-            """,
-            prod_id, store_uuid,
-            current_price, original_price, promo_label,
-            price_per_unit, in_stock,
-            datetime.now(timezone.utc),
-        )
-        return True
+        return {
+            "barcode": f"esselunga-{code}",
+            "name": name,
+            "brand": (p.get("brand") or "").strip() or None,
+            "image_url": p.get("imageURL") or p.get("imageUrl") or None,
+            "price": current_price,
+            "original_price": original_price,
+            "promo_label": self._extract_promo(p),
+            "price_per_unit": self._parse_unit_price(p.get("label")),
+            "in_stock": not bool(p.get("outOfStock", False)),
+        }
 
     # ------------------------------------------------------------------
-    # Pagination
+    # DB upsert (batch — una transazione per pagina)
     # ------------------------------------------------------------------
 
-    async def _scrape_query(
-        self, query_params: dict, label: str, store_uuid: str
+    async def _upsert_products_batch(
+        self, products: list[dict], store_uuid: str
     ) -> int:
-        """Pagina una singola query (categoria o keyword). Ritorna prezzi scritti."""
+        """Upsert di una pagina di prodotti in ~5 round-trip DB."""
+        by_bc: dict[str, dict] = {}
+        for raw in products:
+            n = self._normalize(raw)
+            if n:
+                by_bc[n["barcode"]] = n
+        if not by_bc:
+            return 0
+        if self.dry_run:
+            for n in list(by_bc.values())[:5]:
+                log.info("[DRY] %-50s  €%.2f", n["name"][:50], n["price"])
+            return len(by_bc)
+
+        barcodes = list(by_bc.keys())
+        async with self.conn.transaction():
+            existing = await self.conn.fetch(
+                "SELECT id, barcode FROM products WHERE barcode = ANY($1::text[])",
+                barcodes,
+            )
+            id_by_bc: dict[str, object] = {r["barcode"]: r["id"] for r in existing}
+            existing_bcs = set(id_by_bc.keys())
+
+            new_bcs = [bc for bc in barcodes if bc not in existing_bcs]
+            if new_bcs:
+                rows = await self.conn.fetch(
+                    """INSERT INTO products (barcode, name, brand, image_url, source)
+                       SELECT * FROM unnest($1::text[], $2::text[], $3::text[],
+                                            $4::text[], $5::text[])
+                       RETURNING id, barcode""",
+                    new_bcs,
+                    [by_bc[b]["name"] for b in new_bcs],
+                    [by_bc[b]["brand"] for b in new_bcs],
+                    [by_bc[b]["image_url"] for b in new_bcs],
+                    ["esselunga_web"] * len(new_bcs),
+                )
+                for r in rows:
+                    id_by_bc[r["barcode"]] = r["id"]
+
+            upd = [bc for bc in barcodes if bc in existing_bcs]
+            if upd:
+                await self.conn.execute(
+                    """UPDATE products AS p SET
+                           name = v.name,
+                           brand = COALESCE(v.brand, p.brand),
+                           image_url = COALESCE(p.image_url, v.image_url),
+                           updated_at = NOW()
+                       FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[])
+                            AS v(id, name, brand, image_url)
+                       WHERE p.id = v.id""",
+                    [id_by_bc[b] for b in upd],
+                    [by_bc[b]["name"] for b in upd],
+                    [by_bc[b]["brand"] for b in upd],
+                    [by_bc[b]["image_url"] for b in upd],
+                )
+
+            all_ids = [id_by_bc[b] for b in barcodes]
+            await self.conn.execute(
+                "UPDATE prices SET is_current = FALSE "
+                "WHERE store_id = $1 AND product_id = ANY($2::uuid[])",
+                store_uuid, all_ids,
+            )
+            await self.conn.execute(
+                """INSERT INTO prices
+                       (product_id, store_id, price, original_price, promo_label,
+                        price_per_unit, in_stock, is_current, source, scraped_at)
+                   SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu, v.instock,
+                          TRUE, 'esselunga_web', $8
+                   FROM unnest($1::uuid[], $3::numeric[], $4::numeric[], $5::text[],
+                               $6::numeric[], $7::boolean[])
+                        AS v(id, price, orig, promo, ppu, instock)""",
+                all_ids,
+                store_uuid,
+                [by_bc[b]["price"] for b in barcodes],
+                [by_bc[b]["original_price"] for b in barcodes],
+                [by_bc[b]["promo_label"] for b in barcodes],
+                [by_bc[b]["price_per_unit"] for b in barcodes],
+                [by_bc[b]["in_stock"] for b in barcodes],
+                datetime.now(timezone.utc),
+            )
+        return len(barcodes)
+
+    # ------------------------------------------------------------------
+    # Catalog scrape
+    # ------------------------------------------------------------------
+
+    async def _scrape_catalog(
+        self, product_sets: list[int], store_uuid: str
+    ) -> int:
+        """Pagina l'intero catalogo via productset POST. Ritorna prezzi scritti."""
         start = 0
         total: int | None = None
         count = 0
         errors = 0
+        seen: set[str] = set()
 
         while total is None or start < total:
-            body = {**query_params, "length": PAGE_SIZE, "start": start}
-            data = await self._post(body)
-
+            data = await self._post(
+                PRODUCTSET_URL,
+                {"productSetIds": product_sets, "length": PAGE_SIZE, "start": start},
+            )
             if not data:
                 errors += 1
                 if errors >= 3:
-                    log.error("'%s': 3 errori consecutivi, salto", label)
+                    log.error("3 errori consecutivi a start=%d, interrompo", start)
                     break
                 await asyncio.sleep(5)
                 continue
             errors = 0
 
-            displayables = data.get("displayables") or {}
             if total is None:
-                total = int(displayables.get("rowCount") or 0)
+                total = int(data.get("rowCount") or 0)
+                log.info("Catalogo Esselunga: %d prodotti totali", total)
                 if total == 0:
-                    log.debug("'%s': 0 prodotti, salto", label)
                     break
-                log.info("'%s': %d prodotti totali", label, total)
 
-            entities = displayables.get("entities") or []
+            entities = data.get("entities") or []
             if not entities:
                 break
 
-            for product in entities:
-                try:
-                    if await self._upsert_product_price(product, store_uuid):
-                        count += 1
-                except Exception as exc:
-                    log.warning("Errore prodotto %s: %s", product.get("code"), exc)
+            # entità duplicate tra productSet diversi: dedup sul code
+            fresh = []
+            for e in entities:
+                code = str(e.get("code") or e.get("id") or "")
+                if code and code not in seen:
+                    seen.add(code)
+                    fresh.append(e)
+
+            try:
+                count += await self._upsert_products_batch(fresh, store_uuid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Errore batch a start=%d: %s", start, exc)
 
             start += len(entities)
+            if start % 1000 < PAGE_SIZE:
+                log.info("  …%d/%d prodotti", min(start, total), total)
             if len(entities) < PAGE_SIZE:
                 break
 
@@ -422,36 +429,18 @@ class EsselungaSpider:
     async def run(self) -> int:
         log.info("=== Esselunga spider avviato (dry_run=%s) ===", self.dry_run)
 
-        await self._init_session()
-
         store_map = await self.match_stores(await self.discover_stores())
         if not store_map:
             log.error("Nessuno store disponibile — interruzione")
             return 0
-
         store_uuid = store_map["online"]
         log.info("Store UUID: %s", store_uuid)
 
-        categories = await self._get_categories()
-        total = 0
+        product_sets = await self._get_product_sets()
+        if not product_sets:
+            log.error("Nessun productSet trovato — API route non disponibile")
+            return 0
 
-        if categories:
-            log.info("Scraping per %d categorie", len(categories))
-            for i, cat in enumerate(categories, 1):
-                log.info("[%d/%d] Categoria: %s", i, len(categories), cat)
-                n = await self._scrape_query({"categoryId": cat}, cat, store_uuid)
-                log.info("    → %d prezzi scritti", n)
-                total += n
-        else:
-            log.info(
-                "Categorie non disponibili — fallback %d keyword queries",
-                len(FALLBACK_QUERIES),
-            )
-            for i, kw in enumerate(FALLBACK_QUERIES, 1):
-                log.info("[%d/%d] Keyword: '%s'", i, len(FALLBACK_QUERIES), kw)
-                n = await self._scrape_query({"query": kw}, kw, store_uuid)
-                log.info("    → %d prezzi scritti", n)
-                total += n
-
+        total = await self._scrape_catalog(product_sets, store_uuid)
         log.info("=== Fine. Prezzi totali scritti: %d ===", total)
         return total
