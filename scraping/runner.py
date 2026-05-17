@@ -56,12 +56,23 @@ _CHAINS_SEED = [
 
 
 async def ensure_chains(conn: asyncpg.Connection) -> None:
-    """Insert any missing chains so spiders can always find their chain_id."""
+    """
+    Insert any missing chains so spiders can always find their chain_id.
+
+    Su catena già esistente AGGIORNA i campi di cui il seed è la fonte di
+    verità (nome, shop_url, integration_type, has_online_shop): un tempo era
+    DO NOTHING, perciò catene create prima che il seed avesse lo shop_url —
+    es. Famila — restavano senza URL d'acquisto e senza pulsante "Acquista".
+    """
     for name, slug, has_shop, shop_url, integration in _CHAINS_SEED:
         await conn.execute(
             """INSERT INTO chains (name, slug, has_online_shop, shop_url, integration_type, is_active)
                VALUES ($1, $2, $3, $4, $5, TRUE)
-               ON CONFLICT (slug) DO NOTHING""",
+               ON CONFLICT (slug) DO UPDATE SET
+                   name             = EXCLUDED.name,
+                   has_online_shop  = EXCLUDED.has_online_shop,
+                   shop_url         = EXCLUDED.shop_url,
+                   integration_type = EXCLUDED.integration_type""",
             name, slug, has_shop, shop_url, integration,
         )
 
