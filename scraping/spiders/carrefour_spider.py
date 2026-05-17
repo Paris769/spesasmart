@@ -433,17 +433,20 @@ class CarrefourSpider:
                 all_ids,
             )
 
-            # 5. Inserisce i prezzi nuovi (multi-row)
+            # 5. Inserisce i prezzi nuovi (multi-row).
+            #    product_url: il data-pid è l'EAN; il controller SFCC
+            #    Product-Show?pid={ean} reindirizza alla scheda prodotto.
             await self.conn.execute(
                 """
                 INSERT INTO prices
                     (product_id, store_id, price, original_price, promo_label,
-                     price_per_unit, in_stock, is_current, source, scraped_at)
+                     price_per_unit, in_stock, is_current, source,
+                     product_url, scraped_at)
                 SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu,
-                       TRUE, TRUE, 'carrefour_web', NOW()
+                       TRUE, TRUE, 'carrefour_web', v.url, NOW()
                 FROM unnest($1::uuid[], $3::numeric[], $4::numeric[],
-                            $5::text[], $6::numeric[])
-                     AS v(id, price, orig, promo, ppu)
+                            $5::text[], $6::numeric[], $7::text[])
+                     AS v(id, price, orig, promo, ppu, url)
                 """,
                 all_ids,
                 store_uuid,
@@ -451,6 +454,11 @@ class CarrefourSpider:
                 [by_bc[bc].get("original_price") for bc in barcodes],
                 [by_bc[bc].get("promo_label") for bc in barcodes],
                 [by_bc[bc].get("price_per_unit") for bc in barcodes],
+                [
+                    "https://www.carrefour.it/on/demandware.store"
+                    f"/Sites-carrefour-IT-Site/it_IT/Product-Show?pid={bc}"
+                    for bc in barcodes
+                ],
             )
         return len(barcodes)
 

@@ -273,6 +273,12 @@ class EsselungaSpider:
             "promo_label": self._extract_promo(p),
             "price_per_unit": self._parse_unit_price(p.get("label")),
             "in_stock": not bool(p.get("outOfStock", False)),
+            # link diretto alla scheda prodotto (lo slug finale è cosmetico:
+            # la SPA Esselunga risolve il prodotto dal solo codice numerico)
+            "product_url": (
+                "https://spesaonline.esselunga.it/commerce/nav/supermercato"
+                f"/store/prodotto/{code}/p"
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -346,12 +352,13 @@ class EsselungaSpider:
             await self.conn.execute(
                 """INSERT INTO prices
                        (product_id, store_id, price, original_price, promo_label,
-                        price_per_unit, in_stock, is_current, source, scraped_at)
+                        price_per_unit, in_stock, is_current, source,
+                        product_url, scraped_at)
                    SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu, v.instock,
-                          TRUE, 'esselunga_web', $8
+                          TRUE, 'esselunga_web', v.url, $8
                    FROM unnest($1::uuid[], $3::numeric[], $4::numeric[], $5::text[],
-                               $6::numeric[], $7::boolean[])
-                        AS v(id, price, orig, promo, ppu, instock)""",
+                               $6::numeric[], $7::boolean[], $9::text[])
+                        AS v(id, price, orig, promo, ppu, instock, url)""",
                 all_ids,
                 store_uuid,
                 [by_bc[b]["price"] for b in barcodes],
@@ -360,6 +367,7 @@ class EsselungaSpider:
                 [by_bc[b]["price_per_unit"] for b in barcodes],
                 [by_bc[b]["in_stock"] for b in barcodes],
                 datetime.now(timezone.utc),
+                [by_bc[b]["product_url"] for b in barcodes],
             )
         return len(barcodes)
 
