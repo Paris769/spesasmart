@@ -208,91 +208,106 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
         log.info("=== Per applicare: --apply ===")
         return len(merges)
 
-    # ── Applicazione (transazione) ───────────────────────────────────────────
-    # Re-pointing in BLOCCO: invece di ~6 statement per gruppo (col catalogo
-    # attuale ≈45.000 query, che sforano lo statement timeout del DB), un solo
-    # UPDATE per tabella FK con join su unnest(). Da decine di migliaia di
-    # query si scende a una manciata.
-    dupe_arr: list = []          # id duplicati, paralleli a surv_arr
-    surv_arr: list = []          # id superstite per ciascun duplicato
-    survivor_ids: list = []
-    barcode_upd: list[tuple] = []   # (survivor_id, ean) — EAN ereditato
-    image_upd: list[tuple] = []     # (survivor_id, image_url) — immagine ereditata
-    for g in merges:
-        survivor = _pick_survivor(g)
-        survivor_ids.append(survivor["id"])
-        for p in g:
-            if p["id"] != survivor["id"]:
-                dupe_arr.append(p["id"])
-                surv_arr.append(survivor["id"])
-        if not survivor["_ean"]:
-            real = next((p["_ean"] for p in g if p["_ean"]), None)
-            if real:
-                barcode_upd.append((survivor["id"], real))
-        if not survivor["image_url"]:
-            img = next((p["image_url"] for p in g if p["image_url"]), None)
-            if img:
-                image_upd.append((survivor["id"], img))
+    # ── Applicazione ─────────────────────────────────────────────────────────
+    # Re-pointing in BLOCCO e a CHUNK:
+    #  - un solo UPDATE per tabella FK (join su unnest) invece di ~6 query per
+    #    gruppo: da decine di migliaia di query a una manciata;
+    #  - i merge sono processati a blocchi di CHUNK gruppi, ognuno con la sua
+    #    transazione, così un blocco lento non fa perdere il lavoro fatto.
+    CHUNK = 500
 
-    # gli UPDATE in blocco toccano tabelle grandi (prices): timeout generoso
-    await conn.execute("SET statement_timeout = '600s'")
+    # L'indice esistente su prices è PARZIALE (WHERE is_current = TRUE): non
+    # copre lo storico, perciò il re-pointing di product_id faceva un seq-scan
+    # dell'intera tabella prezzi (→ statement timeout). Indice pieno creato
+    # una volta sola; idempotente nei run successivi.
+    await conn.execute("SET statement_timeout = '1800s'")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prices_product_id ON prices(product_id)"
+    )
 
-    merged = len(dupe_arr)
-    async with conn.transaction():
-        # 1. ri-punta ogni FK verso products dai duplicati al superstite
-        for table, col in fk_cols:
+    merged = 0
+    done = 0
+    for chunk_start in range(0, len(merges), CHUNK):
+        chunk = merges[chunk_start:chunk_start + CHUNK]
+        dupe_arr: list = []          # id duplicati, paralleli a surv_arr
+        surv_arr: list = []          # id superstite per ciascun duplicato
+        survivor_ids: list = []
+        barcode_upd: list[tuple] = []   # (survivor_id, ean) — EAN ereditato
+        image_upd: list[tuple] = []     # (survivor_id, image_url) — img ereditata
+        for g in chunk:
+            survivor = _pick_survivor(g)
+            survivor_ids.append(survivor["id"])
+            for p in g:
+                if p["id"] != survivor["id"]:
+                    dupe_arr.append(p["id"])
+                    surv_arr.append(survivor["id"])
+            if not survivor["_ean"]:
+                real = next((p["_ean"] for p in g if p["_ean"]), None)
+                if real:
+                    barcode_upd.append((survivor["id"], real))
+            if not survivor["image_url"]:
+                img = next((p["image_url"] for p in g if p["image_url"]), None)
+                if img:
+                    image_upd.append((survivor["id"], img))
+
+        async with conn.transaction():
+            # 1. ri-punta ogni FK verso products dai duplicati al superstite
+            for table, col in fk_cols:
+                await conn.execute(
+                    f"""UPDATE {table} AS t SET {col} = m.survivor
+                        FROM unnest($1::uuid[], $2::uuid[]) AS m(dupe, survivor)
+                        WHERE t.{col} = m.dupe""",
+                    dupe_arr, surv_arr,
+                )
+
+            # 2. elimina i duplicati (prima degli UPDATE barcode: così il
+            #    superstite eredita un EAN senza collidere col duplicato)
             await conn.execute(
-                f"""UPDATE {table} AS t SET {col} = m.survivor
-                    FROM unnest($1::uuid[], $2::uuid[]) AS m(dupe, survivor)
-                    WHERE t.{col} = m.dupe""",
-                dupe_arr, surv_arr,
+                "DELETE FROM products WHERE id = ANY($1::uuid[])", dupe_arr
             )
 
-        # 2. elimina i duplicati (prima degli UPDATE barcode: così il
-        #    superstite può ereditare un EAN senza collidere col duplicato)
-        await conn.execute(
-            "DELETE FROM products WHERE id = ANY($1::uuid[])", dupe_arr
-        )
+            # 3. il superstite eredita un EAN reale, se gli manca
+            if barcode_upd:
+                await conn.execute(
+                    """UPDATE products AS p SET barcode = v.ean
+                       FROM unnest($1::uuid[], $2::text[]) AS v(id, ean)
+                       WHERE p.id = v.id""",
+                    [b[0] for b in barcode_upd],
+                    [b[1] for b in barcode_upd],
+                )
 
-        # 3. il superstite eredita un EAN reale, se gli manca
-        if barcode_upd:
+            # 4. il superstite eredita un'immagine, se gli manca
+            if image_upd:
+                await conn.execute(
+                    """UPDATE products AS p SET image_url = v.img
+                       FROM unnest($1::uuid[], $2::text[]) AS v(id, img)
+                       WHERE p.id = v.id""",
+                    [b[0] for b in image_upd],
+                    [b[1] for b in image_upd],
+                )
+
+            # 5. dopo il re-pointing un superstite può avere più prezzi
+            #    is_current per lo stesso negozio: tiene solo il più recente.
             await conn.execute(
-                """UPDATE products AS p SET barcode = v.ean
-                   FROM unnest($1::uuid[], $2::text[]) AS v(id, ean)
-                   WHERE p.id = v.id""",
-                [b[0] for b in barcode_upd],
-                [b[1] for b in barcode_upd],
+                """
+                UPDATE prices SET is_current = FALSE
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY product_id, store_id
+                            ORDER BY scraped_at DESC NULLS LAST
+                        ) AS rn
+                        FROM prices
+                        WHERE is_current = TRUE
+                          AND product_id = ANY($1::uuid[])
+                    ) t WHERE rn > 1
+                )
+                """,
+                survivor_ids,
             )
-
-        # 4. il superstite eredita un'immagine, se gli manca
-        if image_upd:
-            await conn.execute(
-                """UPDATE products AS p SET image_url = v.img
-                   FROM unnest($1::uuid[], $2::text[]) AS v(id, img)
-                   WHERE p.id = v.id""",
-                [b[0] for b in image_upd],
-                [b[1] for b in image_upd],
-            )
-
-        # dopo il re-pointing un superstite può avere più prezzi is_current
-        # per lo stesso negozio: tiene corrente solo il più recente.
-        await conn.execute(
-            """
-            UPDATE prices SET is_current = FALSE
-            WHERE id IN (
-                SELECT id FROM (
-                    SELECT id, ROW_NUMBER() OVER (
-                        PARTITION BY product_id, store_id
-                        ORDER BY scraped_at DESC NULLS LAST
-                    ) AS rn
-                    FROM prices
-                    WHERE is_current = TRUE
-                      AND product_id = ANY($1::uuid[])
-                ) t WHERE rn > 1
-            )
-            """,
-            survivor_ids,
-        )
+        merged += len(dupe_arr)
+        done += len(chunk)
+        log.info("  …%d/%d gruppi uniti", done, len(merges))
 
     log.info(
         "=== Dedup completato: %d gruppi uniti, %d righe duplicate eliminate ===",

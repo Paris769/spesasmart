@@ -86,6 +86,9 @@ CREATE TABLE prices (
 
 CREATE INDEX idx_prices_product_store ON prices(product_id, store_id) WHERE is_current = TRUE;
 CREATE INDEX idx_prices_scraped_at ON prices(scraped_at DESC);
+-- Indice PIENO su product_id (non parziale): serve al dedup per ri-puntare
+-- le FK senza seq-scan dell'intera tabella prezzi (storico compreso).
+CREATE INDEX idx_prices_product_id ON prices(product_id);
 
 -- Utenti
 CREATE TABLE users (
