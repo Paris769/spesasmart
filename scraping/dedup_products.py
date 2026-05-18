@@ -231,6 +231,7 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
         chunk = merges[chunk_start:chunk_start + CHUNK]
         dupe_arr: list = []          # id duplicati, paralleli a surv_arr
         surv_arr: list = []          # id superstite per ciascun duplicato
+        dupe_bcs: list = []          # barcode duplicati, paralleli a surv_arr
         survivor_ids: list = []
         barcode_upd: list[tuple] = []   # (survivor_id, ean) — EAN ereditato
         image_upd: list[tuple] = []     # (survivor_id, image_url) — img ereditata
@@ -241,6 +242,7 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
                 if p["id"] != survivor["id"]:
                     dupe_arr.append(p["id"])
                     surv_arr.append(survivor["id"])
+                    dupe_bcs.append(p["barcode"])
             if not survivor["_ean"]:
                 real = next((p["_ean"] for p in g if p["_ean"]), None)
                 if real:
@@ -260,8 +262,23 @@ async def dedup(conn: asyncpg.Connection, apply: bool = False) -> int:
                     dupe_arr, surv_arr,
                 )
 
-            # 2. elimina i duplicati (prima degli UPDATE barcode: così il
-            #    superstite eredita un EAN senza collidere col duplicato)
+            # 2a. registra l'alias barcode→superstite per ogni duplicato:
+            #     i futuri scrape ritroveranno il prodotto giusto invece di
+            #     ricreare un doppione. (Gli alias che già puntavano a un
+            #     duplicato sono stati ri-puntati dal passo 1: product_aliases
+            #     ha una FK verso products ed è incluso in fk_cols.)
+            await conn.execute(
+                """INSERT INTO product_aliases (alias_barcode, product_id)
+                   SELECT DISTINCT ON (v.bc) v.bc, v.sid
+                   FROM unnest($1::text[], $2::uuid[]) AS v(bc, sid)
+                   WHERE v.bc IS NOT NULL
+                   ON CONFLICT (alias_barcode)
+                   DO UPDATE SET product_id = EXCLUDED.product_id""",
+                dupe_bcs, surv_arr,
+            )
+
+            # 2b. elimina i duplicati (prima degli UPDATE barcode: così il
+            #     superstite eredita un EAN senza collidere col duplicato)
             await conn.execute(
                 "DELETE FROM products WHERE id = ANY($1::uuid[])", dupe_arr
             )

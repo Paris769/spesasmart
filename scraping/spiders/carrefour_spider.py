@@ -23,6 +23,8 @@ import asyncpg
 import httpx
 from bs4 import BeautifulSoup
 
+from ..aliases import resolve_existing
+
 log = logging.getLogger("carrefour")
 
 BASE_URL = "https://www.carrefour.it"
@@ -375,16 +377,11 @@ class CarrefourSpider:
         # Transazione: l'intera pagina è atomica — se uno step fallisce,
         # rollback completo (niente prodotti senza prezzo corrente).
         async with self.conn.transaction():
-            # 1. Quali barcode esistono già
-            existing = await self.conn.fetch(
-                "SELECT id, barcode FROM products WHERE barcode = ANY($1::text[])",
-                barcodes,
-            )
-            id_by_bc: dict[str, object] = {r["barcode"]: r["id"] for r in existing}
-            existing_bcs = set(id_by_bc.keys())
+            # 1. Quali barcode esistono già (prodotti veri + alias del dedup)
+            id_by_bc, direct_bcs = await resolve_existing(self.conn, barcodes)
 
             # 2. Inserisce i prodotti nuovi (multi-row) e recupera gli id
-            new_bcs = [bc for bc in barcodes if bc not in existing_bcs]
+            new_bcs = [bc for bc in barcodes if bc not in id_by_bc]
             if new_bcs:
                 rows = await self.conn.fetch(
                     """
@@ -403,8 +400,10 @@ class CarrefourSpider:
                 for r in rows:
                     id_by_bc[r["barcode"]] = r["id"]
 
-            # 3. Aggiorna i prodotti già esistenti (un solo UPDATE via unnest)
-            upd_bcs = [bc for bc in barcodes if bc in existing_bcs]
+            # 3. Aggiorna i prodotti già esistenti (un solo UPDATE via unnest).
+            #    Solo i barcode diretti: per quelli risolti via alias si tocca
+            #    solo il prezzo, non i dati del prodotto superstite.
+            upd_bcs = [bc for bc in barcodes if bc in direct_bcs]
             if upd_bcs:
                 await self.conn.execute(
                     """
