@@ -32,6 +32,7 @@ from typing import Optional
 import asyncpg
 import httpx
 
+from ..aliases import resolve_existing
 from ..ean import canonical_ean
 
 log = logging.getLogger("cosicomodo")
@@ -272,14 +273,10 @@ class CosiComodoSpider:
 
         barcodes = list(by_bc.keys())
         async with self.conn.transaction():
-            existing = await self.conn.fetch(
-                "SELECT id, barcode FROM products WHERE barcode = ANY($1::text[])",
-                barcodes,
-            )
-            id_by_bc: dict[str, object] = {r["barcode"]: r["id"] for r in existing}
-            existing_bcs = set(id_by_bc.keys())
+            # barcode esistenti: prodotti veri + alias del dedup
+            id_by_bc, direct_bcs = await resolve_existing(self.conn, barcodes)
 
-            new_bcs = [bc for bc in barcodes if bc not in existing_bcs]
+            new_bcs = [bc for bc in barcodes if bc not in id_by_bc]
             if new_bcs:
                 rows = await self.conn.fetch(
                     """INSERT INTO products (barcode, name, brand, image_url, source)
@@ -295,7 +292,9 @@ class CosiComodoSpider:
                 for r in rows:
                     id_by_bc[r["barcode"]] = r["id"]
 
-            upd = [bc for bc in barcodes if bc in existing_bcs]
+            # UPDATE solo per i barcode diretti; per gli alias si scrive
+            # solo il prezzo, senza toccare il prodotto superstite.
+            upd = [bc for bc in barcodes if bc in direct_bcs]
             if upd:
                 await self.conn.execute(
                     """UPDATE products AS p SET

@@ -68,6 +68,17 @@ CREATE TABLE products (
 CREATE INDEX idx_products_barcode ON products(barcode) WHERE barcode IS NOT NULL;
 CREATE INDEX idx_products_name_trgm ON products USING GIN(name gin_trgm_ops);
 
+-- Alias barcode → prodotto: quando il dedup unisce due prodotti, il barcode
+-- del duplicato eliminato resta mappato al superstite. Così i futuri scrape
+-- ritrovano il prodotto giusto invece di ricreare un doppione (causa di
+-- prezzi stantii e prodotti "splittati" tra un run e l'altro).
+CREATE TABLE product_aliases (
+    alias_barcode TEXT PRIMARY KEY,
+    product_id    UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_product_aliases_product ON product_aliases(product_id);
+
 -- Prezzi (serie temporale — solo il prezzo più recente è is_current=TRUE)
 CREATE TABLE prices (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

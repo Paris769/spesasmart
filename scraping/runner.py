@@ -79,11 +79,24 @@ async def ensure_chains(conn: asyncpg.Connection) -> None:
 
 async def ensure_schema(conn: asyncpg.Connection) -> None:
     """
-    Migrazioni idempotenti dello schema: colonne aggiunte dopo il deploy
-    iniziale. Eseguite a ogni run, innocue se già applicate.
+    Migrazioni idempotenti dello schema: colonne/tabelle aggiunte dopo il
+    deploy iniziale. Eseguite a ogni run, innocue se già applicate.
     """
     await conn.execute(
         "ALTER TABLE prices ADD COLUMN IF NOT EXISTS product_url TEXT"
+    )
+    # Alias barcode → prodotto (vedi commento in init.sql): evita la "churn"
+    # del dedup, cioè la ricreazione di doppioni a ogni scrape.
+    await conn.execute(
+        """CREATE TABLE IF NOT EXISTS product_aliases (
+               alias_barcode TEXT PRIMARY KEY,
+               product_id    UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+               created_at    TIMESTAMPTZ DEFAULT NOW()
+           )"""
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_product_aliases_product "
+        "ON product_aliases(product_id)"
     )
 
 
