@@ -25,8 +25,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import datetime
 import os
-import random
 from typing import Optional
 
 import asyncpg
@@ -391,13 +391,23 @@ class CosiComodoSpider:
             else:
                 log.warning("Chain '%s' non trovata nel DB — negozi saltati", slug)
 
-        # Sottoinsieme a rotazione: i negozi scrapati cambiano ogni giorno,
-        # così in pochi run si copre l'intera rete senza sforare il timeout.
+        # Sottoinsieme a rotazione: si scrapano i negozi aggiornati MENO di
+        # recente (prima i mai scrapati). Così run ripetuti — anche nello
+        # stesso giorno — coprono negozi diversi e in pochi giri si completa
+        # l'intera rete, senza sforare il timeout di CI.
         stores = [s for s in self._stores if s["chain"] in chain_ids]
         if 0 < MAX_STORES < len(stores):
-            import datetime
-            rnd = random.Random(datetime.date.today().toordinal())
-            rnd.shuffle(stores)
+            rows = await self.conn.fetch(
+                """SELECT s.external_id, MAX(p.scraped_at) AS last
+                   FROM stores s
+                   LEFT JOIN prices p ON p.store_id = s.id
+                   GROUP BY s.external_id"""
+            )
+            last_by_ext = {r["external_id"]: r["last"] for r in rows}
+            epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+            stores.sort(
+                key=lambda s: last_by_ext.get(f"{s['chain']}-{s['alias']}") or epoch
+            )
             stores = stores[:MAX_STORES]
         log.info(
             "Negozi CosìComodo da scrapare: %d (su %d totali)",
