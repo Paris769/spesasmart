@@ -26,6 +26,7 @@ from .spiders.famila_spider import FamilaSpider
 from .spiders.cosicomodo_spider import CosiComodoSpider
 from .enrich_images import enrich_images
 from .dedup_products import dedup
+from .prune import prune_prices
 
 logging.basicConfig(
     level=logging.INFO,
@@ -179,11 +180,13 @@ async def main(args: argparse.Namespace) -> None:
         chains = (
             [args.chain]
             if args.chain != "all"
-            # 'cosicomodo' escluso dal run 'all': spider non funzionante
-            # (manca mappatura negozio→baseSiteId, vedi cosicomodo_spider.py).
+            # 'prune' in testa: libera lo spazio dello storico prezzi prima
+            # dei nuovi inserimenti (evita che il disco del DB si riempia).
+            # 'cosicomodo' escluso dal run 'all': scrape per-negozio lungo,
+            # ha un suo workflow dedicato.
             # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
-            else ["esselunga", "conad", "carrefour", "eurospin", "iper",
-                  "famila", "dedup"]
+            else ["prune", "esselunga", "conad", "carrefour", "eurospin",
+                  "iper", "famila", "dedup"]
         )
 
         for chain in chains:
@@ -210,6 +213,12 @@ async def main(args: argparse.Namespace) -> None:
             elif chain == "dedup":
                 # Unisce i prodotti duplicati tra catene (--dry-run = anteprima)
                 await dedup(conn, apply=not args.dry_run)
+            elif chain == "prune":
+                # Retention: elimina lo storico prezzi vecchio (vedi prune.py)
+                if args.dry_run:
+                    logging.info("[DRY] prune saltato")
+                else:
+                    await prune_prices(conn)
             else:
                 logging.warning("Chain '%s' non ancora implementata", chain)
     finally:
@@ -220,7 +229,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "images", "dedup", "all"],
+        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "images", "dedup", "prune", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
