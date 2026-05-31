@@ -1,0 +1,60 @@
+name: Guardian (agente autonomo)
+
+# Agente di sorveglianza e auto-riparazione SpesaSmart.
+# Gira ogni 6 ore: sonda gli endpoint dei cataloghi (rileva i cambi-API che
+# zittiscono uno spider), controlla salute/spazio del DB, freschezza e
+# copertura dati, e auto-ripara (prune storico + dedup). Fallisce SOLO quando
+# serve l'uomo: API cambiata (fix spider) o DB non scrivibile.
+
+on:
+  schedule:
+    # Ogni 6 ore (00/06/12/18 UTC)
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      heal:
+        description: "Livello auto-riparazione"
+        required: false
+        default: "safe"
+        type: choice
+        options: [safe, all]
+      check_only:
+        description: "Solo diagnosi (nessuna azione)"
+        required: false
+        default: "false"
+        type: boolean
+
+jobs:
+  guardian:
+    name: Guardian
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+
+      - name: Installa dipendenze
+        run: pip install -r scraping/requirements.txt
+
+      - name: Esegui Guardian
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          FLAGS="--heal ${{ inputs.heal || 'safe' }} --json-out guardian-report.json"
+          if [ "${{ inputs.check_only }}" = "true" ]; then FLAGS="--check-only --json-out guardian-report.json"; fi
+          python -m scraping.guardian $FLAGS
+
+      - name: Salva report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guardian-report
+          path: guardian-report.json
+          if-no-files-found: ignore
+          retention-days: 14
