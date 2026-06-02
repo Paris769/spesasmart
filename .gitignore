@@ -3,6 +3,12 @@
 .env.local
 *.env
 
+# Local secrets — propagazione/rotazione DATABASE_URL
+# (vedi scripts/sync_db_url.py e scripts/rotate_db_credentials.py)
+.db_url.local
+.render.key
+.supabase.pat
+
 # Python
 __pycache__/
 *.pyc
