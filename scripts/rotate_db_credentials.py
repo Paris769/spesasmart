@@ -68,6 +68,11 @@ DEFAULT_RENDER_SERVICE_ID = "srv-d80gk3faqgkc73a3ul50"
 SECRET_NAME = "DATABASE_URL"
 LOCAL_FILE = ".db_url.local"
 
+# Cloudflare davanti ad api.supabase.com blocca i client senza User-Agent "da
+# browser" (Error 1010). Inviamo sempre un UA realistico sulle chiamate REST.
+HTTP_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
 # Parametri del Session pooler (NON cambiano al reset password).
 DB_HOST = "aws-1-eu-central-1.pooler.supabase.com"
 DB_PORT = 5432
@@ -98,7 +103,10 @@ def _leggi_credenziale(env_name: str, file_name: str) -> str | None:
         return val.strip()
     f = Path(file_name)
     if f.is_file():
-        txt = f.read_text(encoding="utf-8").strip()
+        # utf-8-sig: rimuove automaticamente un eventuale BOM (﻿) che
+        # PowerShell/Notepad su Windows antepongono salvando in UTF-8 — altrimenti
+        # finirebbe negli header HTTP/nel DSN rompendo l'auth.
+        txt = f.read_text(encoding="utf-8-sig").strip()
         if txt:
             return txt
     return None
@@ -144,6 +152,7 @@ def supabase_set_password(pat: str, password: str) -> bool:
     req.add_header("Authorization", f"Bearer {pat}")
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", HTTP_UA)  # evita Cloudflare 1010
     try:
         resp = urllib.request.urlopen(req, timeout=30)
     except urllib.error.HTTPError as e:
@@ -266,6 +275,7 @@ def _render_request(method: str, path: str, api_key: str, body: dict | None = No
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {api_key}")
     req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", HTTP_UA)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     return urllib.request.urlopen(req, timeout=20)

@@ -55,7 +55,9 @@ def leggi_dsn() -> str:
     """
     f = Path(LOCAL_FILE)
     if f.is_file():
-        dsn = f.read_text(encoding="utf-8").strip()
+        # utf-8-sig: rimuove un eventuale BOM (﻿) aggiunto da PowerShell/Notepad,
+        # che altrimenti sporcherebbe il DSN.
+        dsn = f.read_text(encoding="utf-8-sig").strip()
         if dsn:
             return dsn
     env = os.environ.get("DATABASE_URL")
@@ -162,6 +164,11 @@ def _render_request(method: str, path: str, api_key: str, body: dict | None = No
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {api_key}")
     req.add_header("Accept", "application/json")
+    req.add_header(
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    )
     if data is not None:
         req.add_header("Content-Type", "application/json")
     return urllib.request.urlopen(req, timeout=15)
