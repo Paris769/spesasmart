@@ -3,6 +3,10 @@
 .env.local
 *.env
 
+# Local secrets — propagazione DATABASE_URL (enter-once, vedi scripts/sync_db_url.py)
+.db_url.local
+.render.key
+
 # Python
 __pycache__/
 *.pyc
