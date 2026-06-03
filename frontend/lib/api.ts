@@ -130,6 +130,68 @@ export const optimizeList = (
     .post(`/lists/${listId}/optimize`, { lat, lng, radius_km: radiusKm })
     .then((r) => r.data);
 
+// ── Ottimizzatore lista "quick" (stateless, senza login) ─────────────────────
+
+export interface QuickStoreItem {
+  query: string;
+  quantity: number;
+  price: number;
+  subtotal: number;
+  product_name: string;
+  product_url: string | null;
+  image_url?: string | null;
+}
+
+export interface QuickStore {
+  store_id: string;
+  store_name: string;
+  chain_name: string;
+  chain_slug: string;
+  shop_url: string | null;
+  has_delivery: boolean;
+  has_click_collect: boolean;
+  is_online: boolean;
+  distance_km: number | null;
+  total: number;
+  covered: number;
+  items: QuickStoreItem[];
+}
+
+export interface QuickOptimizeResult {
+  n_items: number;
+  n_findable: number;
+  best_single: QuickStore | null;
+  single_ranking: QuickStore[];
+  multi_store: {
+    total: number;
+    savings_vs_single: number;
+    stores: {
+      store_id: string;
+      store_name: string;
+      chain_name: string;
+      shop_url: string | null;
+      subtotal: number;
+      items: QuickStoreItem[];
+    }[];
+  };
+  not_found: string[];
+}
+
+export const optimizeQuick = (
+  items: { query: string; quantity?: number }[],
+  lat: number,
+  lng: number,
+  radiusKm: number
+): Promise<QuickOptimizeResult> =>
+  api
+    .post<QuickOptimizeResult>("/lists/optimize-quick", {
+      items,
+      lat,
+      lng,
+      radius_km: radiusKm,
+    })
+    .then((r) => r.data);
+
 export interface ReceiptItem {
   name: string;
   quantity: number;

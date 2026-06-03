@@ -29,6 +29,18 @@ class OptimizeRequest(BaseModel):
     max_stores: int = 2          # quanti negozi al massimo nella soluzione
 
 
+class QuickItem(BaseModel):
+    query: str                   # testo libero, es. "latte", "pasta barilla"
+    quantity: float = 1
+
+
+class QuickOptimizeRequest(BaseModel):
+    items: list[QuickItem]
+    lat: float
+    lng: float
+    radius_km: float = 5.0
+
+
 # ── Endpoint ─────────────────────────────────────────────────────────────────
 
 @router.get("/")
@@ -100,6 +112,184 @@ async def remove_item(list_id: str, item_id: str, db: AsyncSession = Depends(get
         {"iid": item_id, "lid": list_id},
     )
     await db.commit()
+
+
+# Query SQL: per ogni negozio, il prodotto piu' economico che matcha il testo.
+# DISTINCT ON (s.id) + ORDER BY s.id, price ASC = 1 riga/negozio = il piu' barato.
+_QUICK_ITEM_SQL = text("""
+    SELECT DISTINCT ON (s.id)
+        s.id::text          AS store_id,
+        s.name              AS store_name,
+        c.name              AS chain_name,
+        c.slug              AS chain_slug,
+        c.shop_url          AS shop_url,
+        s.has_delivery      AS has_delivery,
+        s.has_click_collect AS has_click_collect,
+        (s.external_id LIKE '%-online') AS is_online,
+        CASE WHEN s.external_id LIKE '%-online' THEN NULL
+             ELSE ROUND(ST_Distance(
+                    s.coordinates::geography,
+                    ST_Point(:lng, :lat)::geography
+                  )::numeric / 1000, 2)
+        END                 AS distance_km,
+        pr.price            AS price,
+        pr.product_url      AS product_url,
+        p.id::text          AS product_id,
+        p.name              AS product_name,
+        p.image_url         AS image_url
+    FROM products p
+    JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
+    JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
+    JOIN chains c  ON s.chain_id = c.id
+    WHERE pr.price > 0                       -- scarta prezzi nulli/invalidi
+      AND (
+            to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
+                @@ plainto_tsquery('simple', :q)
+            OR p.name ILIKE :qlike
+          )
+      AND (
+            s.external_id LIKE '%-online'
+            OR ST_DWithin(
+                 s.coordinates::geography,
+                 ST_Point(:lng, :lat)::geography,
+                 :radius_m
+               )
+          )
+    -- per ciascun negozio: prima il prodotto piu' PERTINENTE (nome che inizia /
+    -- contiene la parola), poi a parita' di pertinenza il piu' economico. Evita
+    -- che "latte" peschi "panino al latte" solo perche' costa meno.
+    ORDER BY s.id,
+             CASE
+                 WHEN lower(p.name) = :q_lower              THEN 4
+                 WHEN lower(p.name) LIKE :q_start           THEN 3
+                 WHEN lower(p.name) LIKE :q_mid
+                   OR lower(p.name) LIKE :q_end             THEN 2
+                 ELSE 1
+             END DESC,
+             pr.price ASC
+""")
+
+
+@router.post("/optimize-quick")
+async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Ottimizzatore STATELESS della lista (nessun login, nessuna lista salvata).
+    Input: lista di voci in testo libero + posizione. Per ogni voce trova il
+    prodotto piu' economico che la soddisfa in ciascun negozio vicino (o online),
+    poi calcola:
+      • best_single  — il negozio singolo che copre piu' voci al minor costo;
+      • single_ranking — i primi negozi per costo totale (trasparenza);
+      • multi_store  — split goloso: ogni voce dal negozio piu' economico;
+      • savings      — risparmio del multi vs il miglior singolo.
+    Ogni voce porta il deep-link al prodotto (product_url) per l'acquisto 1-tap.
+    """
+    items = [it for it in body.items if it.query and len(it.query.strip()) >= 2][:40]
+    if not items:
+        raise HTTPException(status_code=400, detail="Fornire almeno una voce valida")
+
+    radius_m = body.radius_km * 1000
+    # stores[sid] = meta + righe per voce; per_item[i] = miglior prezzo globale
+    stores: dict[str, dict] = {}
+    per_item_best: list[Optional[dict]] = []
+    not_found: list[str] = []
+
+    for idx, it in enumerate(items):
+        q = it.query.strip()
+        qty = float(it.quantity or 1)
+        ql = q.lower()
+        rows = (await db.execute(_QUICK_ITEM_SQL, {
+            "q": q, "qlike": f"%{q}%",
+            "q_lower": ql, "q_start": f"{ql} %",
+            "q_mid": f"% {ql} %", "q_end": f"% {ql}",
+            "lat": body.lat, "lng": body.lng, "radius_m": radius_m,
+        })).mappings().all()
+
+        if not rows:
+            not_found.append(q)
+            per_item_best.append(None)
+            continue
+
+        # miglior prezzo globale per questa voce (per lo split multi-negozio)
+        best_row = min(rows, key=lambda r: float(r["price"]))
+        per_item_best.append({
+            "query": q, "quantity": qty,
+            "price": float(best_row["price"]),
+            "subtotal": round(float(best_row["price"]) * qty, 2),
+            "store_id": best_row["store_id"],
+            "chain_name": best_row["chain_name"],
+            "store_name": best_row["store_name"],
+            "shop_url": best_row["shop_url"],
+            "product_url": best_row["product_url"],
+            "product_name": best_row["product_name"],
+        })
+
+        for r in rows:
+            sid = r["store_id"]
+            st = stores.setdefault(sid, {
+                "store_id": sid,
+                "store_name": r["store_name"],
+                "chain_name": r["chain_name"],
+                "chain_slug": r["chain_slug"],
+                "shop_url": r["shop_url"],
+                "has_delivery": r["has_delivery"],
+                "has_click_collect": r["has_click_collect"],
+                "is_online": r["is_online"],
+                "distance_km": float(r["distance_km"]) if r["distance_km"] is not None else None,
+                "total": 0.0,
+                "covered": 0,
+                "items": [],
+            })
+            sub = round(float(r["price"]) * qty, 2)
+            st["total"] = round(st["total"] + sub, 2)
+            st["covered"] += 1
+            st["items"].append({
+                "query": q, "quantity": qty,
+                "price": float(r["price"]), "subtotal": sub,
+                "product_name": r["product_name"],
+                "product_url": r["product_url"],
+                "image_url": r["image_url"],
+            })
+
+    n_items = len(items)
+    n_findable = sum(1 for b in per_item_best if b is not None)
+
+    # Ranking single-store: prima chi copre piu' voci, poi chi costa meno.
+    ranking = sorted(stores.values(), key=lambda s: (-s["covered"], s["total"]))
+    best_single = ranking[0] if ranking else None
+
+    # Split multi-negozio (goloso, per voce piu' economica)
+    multi_by_store: dict[str, dict] = {}
+    multi_total = 0.0
+    for b in per_item_best:
+        if not b:
+            continue
+        sid = b["store_id"]
+        ms = multi_by_store.setdefault(sid, {
+            "store_id": sid, "store_name": b["store_name"],
+            "chain_name": b["chain_name"], "shop_url": b["shop_url"],
+            "subtotal": 0.0, "items": [],
+        })
+        ms["subtotal"] = round(ms["subtotal"] + b["subtotal"], 2)
+        multi_total = round(multi_total + b["subtotal"], 2)
+        ms["items"].append(b)
+
+    # Risparmio: confronto solo se il singolo migliore copre tutte le voci trovabili.
+    savings = 0.0
+    if best_single and best_single["covered"] == n_findable and n_findable > 0:
+        savings = round(best_single["total"] - multi_total, 2)
+
+    return {
+        "n_items": n_items,
+        "n_findable": n_findable,
+        "best_single": best_single,
+        "single_ranking": ranking[:5],
+        "multi_store": {
+            "total": multi_total,
+            "stores": sorted(multi_by_store.values(), key=lambda s: -s["subtotal"]),
+            "savings_vs_single": savings if savings > 0 else 0.0,
+        },
+        "not_found": not_found,
+    }
 
 
 @router.post("/{list_id}/optimize")
