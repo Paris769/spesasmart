@@ -47,6 +47,10 @@ CREATE TABLE stores (
 
 CREATE INDEX idx_stores_coordinates ON stores USING GIST(coordinates);
 CREATE INDEX idx_stores_chain ON stores(chain_id);
+-- I negozi virtuali di spesa online (external_id '*-online') sono filtrati con
+-- LIKE '%-online' in molte query: il wildcard iniziale non e' indicizzabile,
+-- quindi indice parziale che li marca.
+CREATE INDEX idx_stores_online ON stores(id) WHERE external_id LIKE '%-online';
 
 -- Prodotti
 CREATE TABLE products (
@@ -101,6 +105,9 @@ CREATE INDEX idx_prices_scraped_at ON prices(scraped_at DESC);
 -- Indice PIENO su product_id (non parziale): serve al dedup per ri-puntare
 -- le FK senza seq-scan dell'intera tabella prezzi (storico compreso).
 CREATE INDEX idx_prices_product_id ON prices(product_id);
+-- Indice che parte da store_id (solo prezzi correnti): serve all'ottimizzatore
+-- lista (optimize-quick) che raggruppa per negozio, evitando seq-scan.
+CREATE INDEX idx_prices_store_current ON prices(store_id) WHERE is_current = TRUE;
 
 -- Utenti
 CREATE TABLE users (

@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
@@ -9,6 +9,7 @@ router = APIRouter(prefix="/stores", tags=["stores"])
 
 @router.get("/nearby")
 async def get_nearby_stores(
+    response: Response,
     lat: float = Query(..., description="Latitudine utente"),
     lng: float = Query(..., description="Longitudine utente"),
     radius_km: float = Query(5.0, ge=0.5, le=50, description="Raggio in km"),
@@ -17,6 +18,9 @@ async def get_nearby_stores(
     has_click_collect: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    # I negozi cambiano molto raramente: cache 10 min (browser + React Query).
+    response.headers["Cache-Control"] = "public, max-age=600"
+
     filters = ["s.is_active = TRUE"]
     params: dict = {"lat": lat, "lng": lng, "radius_m": radius_km * 1000}
 
@@ -24,9 +28,11 @@ async def get_nearby_stores(
         filters.append("s.chain_id = :chain_id")
         params["chain_id"] = chain_id
     if has_delivery is not None:
-        filters.append(f"s.has_delivery = {'TRUE' if has_delivery else 'FALSE'}")
+        filters.append("s.has_delivery = :has_delivery")
+        params["has_delivery"] = has_delivery
     if has_click_collect is not None:
-        filters.append(f"s.has_click_collect = {'TRUE' if has_click_collect else 'FALSE'}")
+        filters.append("s.has_click_collect = :has_cc")
+        params["has_cc"] = has_click_collect
 
     where = " AND ".join(filters)
 

@@ -45,10 +45,14 @@ DB_URL = (
 OFF_API = "https://world.openfoodfacts.org/api/v2/product/{barcode}.json"
 USER_AGENT = "SpesaSmart/1.0 (https://spesasmart.it; +info@optimait.it)"
 
-RATE = 0.75          # secondi tra una richiesta e l'altra (~80/min, < limite OFF)
+# OFF impone 15 richieste/min/IP sull'endpoint prodotto: oltre → ban dell'IP
+# (era la causa dei 429 in CI). 4.3s ≈ 14/min, sotto il limite.
+RATE = 4.3
 TIMEOUT = 12         # timeout per richiesta
-DEFAULT_LIMIT = 3000 # prodotti per esecuzione (3000 × 0.75s ≈ 38 min)
-DB_BATCH = 200       # ogni quanti aggiornamenti scrivere sul DB
+# In 90 min di CI: ~1250 prodotti/run. Job schedulato frequente per coprire il
+# backlog nel tempo; per riempire in fretta usare il dump bulk OFF (vedi README).
+DEFAULT_LIMIT = 1200
+DB_BATCH = 100       # ogni quanti aggiornamenti scrivere sul DB
 
 
 async def _fetch_off_image(client: httpx.AsyncClient, barcode: str) -> str | None:

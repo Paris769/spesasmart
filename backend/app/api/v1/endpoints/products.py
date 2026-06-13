@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
@@ -163,12 +163,15 @@ async def search_products(
 @router.get("/{product_id}/prices")
 async def get_product_prices(
     product_id: str,
+    response: Response,
     lat: float = Query(...),
     lng: float = Query(...),
     radius_km: float = Query(5.0, ge=0.5, le=50),
     area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
     db: AsyncSession = Depends(get_db),
 ):
+    # I prezzi sono aggiornati dallo scraper poche volte al giorno: cache 5 min.
+    response.headers["Cache-Control"] = "public, max-age=300"
     """Prezzi del prodotto nei negozi vicini, ordinati per prezzo crescente.
 
     Il filtro geografico sui punti vendita fisici usa l'area disegnata
