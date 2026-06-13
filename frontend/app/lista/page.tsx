@@ -1,30 +1,74 @@
 "use client";
-import { useState } from "react";
-import { optimizeQuick, QuickOptimizeResult } from "@/lib/api";
+import { useEffect, useState } from "react";
+import {
+  optimizeQuick,
+  searchProducts,
+  QuickOptimizeResult,
+  Product,
+} from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
 import PurchasePlan from "@/components/ui/PurchasePlan";
-import { PencilLine, Calculator, ShoppingBag } from "lucide-react";
+import { PencilLine, Calculator, ShoppingBag, Search } from "lucide-react";
+
+// Una voce della lista: o un PRODOTTO REALE scelto dall'autocomplete (con
+// product_id → confronto esatto tra negozi), oppure testo libero (match fuzzy).
+type ListItem = {
+  query: string;
+  product_id?: string;
+  label: string;
+  image_url?: string | null;
+};
+const itemKey = (it: ListItem) => it.product_id ?? it.query.toLowerCase();
 
 export default function ListaPage() {
   const { location, radiusKm } = useAppStore();
   const [text, setText] = useState("");
-  const [items, setItems] = useState<string[]>([]);
+  const [items, setItems] = useState<ListItem[]>([]);
+  const [sug, setSug] = useState<Product[]>([]);
+  const [searching, setSearching] = useState(false);
   const [result, setResult] = useState<QuickOptimizeResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const addFromText = () => {
-    // accetta "latte, pasta, caffè" oppure una voce per riga
-    const parts = text
-      .split(/[,\n]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length >= 2);
-    if (parts.length) {
-      setItems((prev) => Array.from(new Set([...prev, ...parts])));
-      setText("");
-      setResult(null);
+  // Autocomplete: mentre scrivi, propone prodotti REALI dal catalogo (debounce).
+  // Funziona anche senza posizione; se attiva, mostra il prezzo "da €…" vicino.
+  useEffect(() => {
+    const t = text.trim();
+    if (t.length < 2) {
+      setSug([]);
+      setSearching(false);
+      return;
     }
+    setSearching(true);
+    const h = setTimeout(async () => {
+      try {
+        const res = await searchProducts(t, location?.lat, location?.lng, radiusKm);
+        setSug(res.slice(0, 8));
+      } catch {
+        setSug([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(h);
+  }, [text, location, radiusKm]);
+
+  const addItem = (it: ListItem) => {
+    setItems((prev) =>
+      prev.some((x) => itemKey(x) === itemKey(it)) ? prev : [...prev, it]
+    );
+    setText("");
+    setSug([]);
+    setResult(null);
+  };
+
+  const addProduct = (p: Product) =>
+    addItem({ query: p.name, product_id: p.id, label: p.name, image_url: p.image_url });
+
+  const addFreeText = () => {
+    const t = text.trim();
+    if (t.length >= 2) addItem({ query: t, label: t });
   };
 
   const removeItem = (i: number) => {
@@ -38,7 +82,7 @@ export default function ListaPage() {
     setError(null);
     try {
       const res = await optimizeQuick(
-        items.map((q) => ({ query: q, quantity: 1 })),
+        items.map((it) => ({ query: it.query, quantity: 1, product_id: it.product_id })),
         location.lat,
         location.lng,
         radiusKm
@@ -60,7 +104,8 @@ export default function ListaPage() {
       <div>
         <h1 className="text-xl font-bold text-gray-800">La tua lista della spesa</h1>
         <p className="text-sm text-gray-500">
-          Scrivi cosa ti serve: ti dico <b>dove costa meno</b> tra i negozi vicini.
+          Scrivi cosa ti serve e <b>scegli il prodotto reale</b> dall&apos;elenco: ti
+          dico dove costa meno.
         </p>
       </div>
 
@@ -77,7 +122,7 @@ export default function ListaPage() {
         </div>
         <ol className="grid grid-cols-3 gap-2 text-center">
           {[
-            { Icon: PencilLine, t: "Scrivi la lista" },
+            { Icon: PencilLine, t: "Scegli i prodotti" },
             { Icon: Calculator, t: "Trova dove costa meno" },
             { Icon: ShoppingBag, t: "Apri e compra guidato" },
           ].map(({ Icon, t }, i) => (
@@ -98,21 +143,66 @@ export default function ListaPage() {
         </p>
       </div>
 
-      {/* Input voci */}
-      <div className="flex gap-2">
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addFromText()}
-          placeholder="Es. latte, pasta, caffè, olio…"
-          className="flex-1 border-2 border-gray-200 focus:border-primary rounded-xl px-4 py-2 outline-none transition"
-        />
-        <button
-          onClick={addFromText}
-          className="bg-primary text-white px-4 rounded-xl font-medium"
-        >
-          Aggiungi
-        </button>
+      {/* Input + autocomplete prodotti reali */}
+      <div className="relative">
+        <div className="flex gap-2">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addFreeText()}
+            placeholder="Cerca un prodotto… es. latte, Gillette Mach3"
+            className="flex-1 border-2 border-gray-200 focus:border-primary rounded-xl px-4 py-2 outline-none transition"
+          />
+          <button
+            onClick={addFreeText}
+            className="bg-primary text-white px-4 rounded-xl font-medium"
+          >
+            Aggiungi
+          </button>
+        </div>
+
+        {text.trim().length >= 2 && (sug.length > 0 || searching) && (
+          <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-stone-200 rounded-xl shadow-float overflow-hidden max-h-[60vh] overflow-y-auto">
+            {searching && sug.length === 0 && (
+              <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti…</p>
+            )}
+            {sug.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => addProduct(p)}
+                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-surface text-left border-b border-stone-100 last:border-0"
+              >
+                {p.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={p.image_url}
+                    alt=""
+                    className="w-9 h-9 object-contain rounded bg-white border border-stone-100 shrink-0"
+                  />
+                ) : (
+                  <div className="w-9 h-9 rounded bg-stone-100 grid place-items-center shrink-0 text-stone-300">
+                    <Search size={16} />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-stone-800 leading-snug truncate">{p.name}</p>
+                  {p.brand && <p className="text-[11px] text-stone-400">{p.brand}</p>}
+                </div>
+                {p.min_price != null && (
+                  <span className="text-sm font-semibold text-deep tnum shrink-0">
+                    da €{Number(p.min_price).toFixed(2)}
+                  </span>
+                )}
+              </button>
+            ))}
+            <button
+              onClick={addFreeText}
+              className="w-full px-3 py-2 text-left text-[12px] text-stone-500 hover:bg-surface"
+            >
+              + Aggiungi «{text.trim()}» come ricerca generica
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Chip voci */}
@@ -121,13 +211,33 @@ export default function ListaPage() {
           {items.map((it, i) => (
             <span
               key={i}
-              className="bg-white border rounded-full pl-3 pr-2 py-1 text-sm flex items-center gap-1"
+              className="bg-white border rounded-full pl-1.5 pr-2 py-1 text-sm flex items-center gap-1.5"
             >
-              {it}
+              {it.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={it.image_url}
+                  alt=""
+                  className="w-6 h-6 object-contain rounded-full bg-white border border-stone-100"
+                />
+              ) : (
+                <span className="w-6 h-6 rounded-full bg-stone-100 grid place-items-center text-stone-400 text-[10px]">
+                  ●
+                </span>
+              )}
+              <span className="max-w-[150px] truncate">{it.label}</span>
+              {it.product_id && (
+                <span
+                  className="text-[10px] text-primary font-bold"
+                  title="Prodotto reale selezionato"
+                >
+                  ✓
+                </span>
+              )}
               <button
                 onClick={() => removeItem(i)}
                 className="text-gray-400 hover:text-red-500 font-bold px-1"
-                aria-label={`Rimuovi ${it}`}
+                aria-label={`Rimuovi ${it.label}`}
               >
                 ×
               </button>

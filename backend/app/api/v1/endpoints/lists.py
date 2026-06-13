@@ -33,6 +33,10 @@ class OptimizeRequest(BaseModel):
 class QuickItem(BaseModel):
     query: str                   # testo libero, es. "latte", "pasta barilla"
     quantity: float = 1
+    # Se l'utente ha SCELTO un prodotto reale dall'autocomplete, ne arriva l'id:
+    # in quel caso confrontiamo ESATTAMENTE quel prodotto tra i negozi (apples
+    # to apples), invece del match testuale "il piu' economico che assomiglia".
+    product_id: Optional[str] = None
 
 
 class QuickOptimizeRequest(BaseModel):
@@ -171,6 +175,46 @@ _QUICK_ITEM_SQL = text("""
 """)
 
 
+# Variante per prodotto SCELTO: stesso prodotto (p.id) confrontato tra i negozi.
+_QUICK_ITEM_BY_ID_SQL = text("""
+    SELECT DISTINCT ON (s.id)
+        s.id::text          AS store_id,
+        s.name              AS store_name,
+        c.name              AS chain_name,
+        c.slug              AS chain_slug,
+        c.shop_url          AS shop_url,
+        s.has_delivery      AS has_delivery,
+        s.has_click_collect AS has_click_collect,
+        (s.external_id LIKE '%-online') AS is_online,
+        CASE WHEN s.external_id LIKE '%-online' THEN NULL
+             ELSE ROUND(ST_Distance(
+                    s.coordinates::geography,
+                    ST_Point(:lng, :lat)::geography
+                  )::numeric / 1000, 2)
+        END                 AS distance_km,
+        pr.price            AS price,
+        pr.product_url      AS product_url,
+        p.id::text          AS product_id,
+        p.name              AS product_name,
+        p.image_url         AS image_url
+    FROM products p
+    JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
+    JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
+    JOIN chains c  ON s.chain_id = c.id
+    WHERE pr.price > 0
+      AND p.id = :pid
+      AND (
+            s.external_id LIKE '%-online'
+            OR ST_DWithin(
+                 s.coordinates::geography,
+                 ST_Point(:lng, :lat)::geography,
+                 :radius_m
+               )
+          )
+    ORDER BY s.id, pr.price ASC
+""")
+
+
 @router.post("/optimize-quick")
 async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(get_db)):
     """
@@ -197,13 +241,31 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
     for idx, it in enumerate(items):
         q = it.query.strip()
         qty = float(it.quantity or 1)
-        ql = q.lower()
-        rows = (await db.execute(_QUICK_ITEM_SQL, {
-            "q": q, "qlike": f"%{q}%",
-            "q_lower": ql, "q_start": f"{ql} %",
-            "q_mid": f"% {ql} %", "q_end": f"% {ql}",
-            "lat": body.lat, "lng": body.lng, "radius_m": radius_m,
-        })).mappings().all()
+
+        # Prodotto scelto dall'utente → confronto esatto per id (se l'id è un UUID
+        # valido). Se non trova prezzi nel raggio, ricade sul match testuale.
+        pid_valid = None
+        if it.product_id:
+            try:
+                pid_valid = str(UUID(it.product_id))
+            except (ValueError, AttributeError, TypeError):
+                pid_valid = None
+
+        rows = []
+        if pid_valid:
+            rows = (await db.execute(_QUICK_ITEM_BY_ID_SQL, {
+                "pid": pid_valid,
+                "lat": body.lat, "lng": body.lng, "radius_m": radius_m,
+            })).mappings().all()
+
+        if not rows:
+            ql = q.lower()
+            rows = (await db.execute(_QUICK_ITEM_SQL, {
+                "q": q, "qlike": f"%{q}%",
+                "q_lower": ql, "q_start": f"{ql} %",
+                "q_mid": f"% {ql} %", "q_end": f"% {ql}",
+                "lat": body.lat, "lng": body.lng, "radius_m": radius_m,
+            })).mappings().all()
 
         if not rows:
             not_found.append(q)
