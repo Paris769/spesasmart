@@ -167,7 +167,25 @@ async def search_products(
         """),
         params,
     )
-    return [dict(r) for r in result.mappings().all()]
+    rows = [dict(r) for r in result.mappings().all()]
+
+    # Telemetria (fire-and-forget): alimenta gli agenti Product/Growth. Le
+    # ricerche a 0 risultati sono i gap più preziosi. Non deve mai rompere la
+    # risposta all'utente.
+    try:
+        await db.execute(
+            text(
+                "INSERT INTO search_log (query, n_results, lat, lng, radius_km) "
+                "VALUES (:q, :n, :lat, :lng, :r)"
+            ),
+            {"q": q[:200], "n": len(rows), "lat": lat, "lng": lng,
+             "r": radius_km},
+        )
+        await db.commit()
+    except Exception:
+        pass
+
+    return rows
 
 
 @router.get("/{product_id}/prices")
