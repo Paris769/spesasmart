@@ -116,6 +116,13 @@ async def search_products(
         params["radius_m"] = radius_km * 1000
 
     where = " AND ".join(filters)
+
+    # Ricerca FUZZY tollerante ai refusi (pg_trgm word_similarity): "gilette"
+    # trova "Gillette", "mach3" trova "Mach 3". La soglia bassa (0.3) massimizza
+    # il recall; l'operatore <% usa l'indice GIN gin_trgm_ops. SET LOCAL vale
+    # solo per questa transazione/connessione.
+    await db.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.3"))
+
     result = await db.execute(
         text(f"""
             SELECT p.*,
@@ -126,6 +133,7 @@ async def search_products(
                          OR lower(p.name) LIKE :q_lower_end         THEN 2
                        ELSE 1
                    END AS word_rank,
+                   word_similarity(:q, p.name) AS fuzzy_score,
                    ts_rank(
                        to_tsvector('simple', lower(p.name)),
                        plainto_tsquery('simple', :q_tsquery)
@@ -144,13 +152,15 @@ async def search_products(
                   {price_geo}
             ) pr ON TRUE
             WHERE {where} AND (
-                to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
-                    @@ plainto_tsquery('simple', :q_tsquery)
-                OR p.name ILIKE :q_like
+                :q <% p.name                                      -- fuzzy (refusi), GIN-indexed
+                OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
+                    @@ plainto_tsquery('simple', :q_tsquery)      -- token esatti
+                OR p.name ILIKE :q_like                           -- sottostringa
                 OR p.brand ILIKE :q_like
             )
             ORDER BY
                 word_rank DESC,
+                fuzzy_score DESC,
                 ts_score   DESC,
                 similarity(p.name, :q) DESC
             LIMIT :limit OFFSET :offset
