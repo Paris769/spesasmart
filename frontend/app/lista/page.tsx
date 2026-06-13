@@ -3,6 +3,7 @@ import { useState } from "react";
 import { optimizeQuick, QuickOptimizeResult } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
+import PurchasePlan from "@/components/ui/PurchasePlan";
 
 export default function ListaPage() {
   const { location, radiusKm } = useAppStore();
@@ -176,6 +177,9 @@ export default function ListaPage() {
               )}
             </div>
           )}
+
+          {/* Assistente acquisto (handoff): piano guidato + deep-link */}
+          {best && <PurchasePlan result={result} />}
 
           {/* Split multi-negozio se conviene */}
           {multi && multi.savings_vs_single > 0 && (
