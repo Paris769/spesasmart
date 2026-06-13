@@ -1,0 +1,51 @@
+name: Immagini bulk (parallelo)
+
+# Riempimento VELOCE delle foto mancanti: stesso metodo barcode-esatto del job
+# schedulato (match 100% corretto), ma parallelizzato su N runner. Ogni runner
+# GitHub ha un IP diverso → ogni shard ha il proprio budget di rate-limit OFF
+# (15 req/min), quindi la velocità si moltiplica ~N volte senza sforare il
+# limite per-IP. Da lanciare a mano (workflow_dispatch) quando serve recuperare
+# tutto il backlog in fretta; il job schedulato images.yml resta per il mantenimento.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Numero di shard paralleli"
+        required: false
+        default: "12"
+        type: string
+      limit_per_shard:
+        description: "Prodotti per shard in questo run"
+        required: false
+        default: "1400"
+        type: string
+
+jobs:
+  enrich:
+    name: Shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        # Fino a 12 shard. Se shards < 12, gli shard in eccesso non trovano righe
+        # (filtro hash % shards) e finiscono subito: innocui.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+      - run: pip install -r scraping/requirements.txt
+      - name: Arricchisci immagini (shard ${{ matrix.shard }})
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -m scraping.enrich_images \
+            --shards ${{ inputs.shards || '12' }} \
+            --shard ${{ matrix.shard }} \
+            --limit ${{ inputs.limit_per_shard || '1400' }}
