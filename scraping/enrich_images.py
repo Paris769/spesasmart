@@ -106,10 +106,20 @@ async def _flush(conn: asyncpg.Connection, updates: list[tuple]) -> int:
 
 
 async def enrich_images(
-    conn: asyncpg.Connection, limit: int = DEFAULT_LIMIT, dry_run: bool = False
+    conn: asyncpg.Connection,
+    limit: int = DEFAULT_LIMIT,
+    dry_run: bool = False,
+    shards: int = 1,
+    shard: int = 0,
 ) -> int:
     """
     Arricchisce le immagini mancanti. Ritorna il numero di immagini scritte.
+
+    Sharding (shards>1): ogni shard processa un sottoinsieme DISGIUNTO di
+    prodotti (hash stabile del barcode % shards == shard). Permette di eseguire
+    N runner in parallelo — ognuno con un IP diverso e quindi il proprio budget
+    di rate-limit OFF (15 req/min) — moltiplicando la velocità senza superare il
+    limite per-IP e mantenendo il match 100% corretto (sempre per barcode).
     """
     rows = await conn.fetch(
         """
@@ -117,11 +127,14 @@ async def enrich_images(
           FROM products
          WHERE (image_url IS NULL OR image_url = '')
            AND barcode ~ '^[0-9]{8,14}$'
+           AND ($2 <= 1 OR (abs(hashtext(barcode)) % $2) = $3)
          ORDER BY updated_at DESC NULLS LAST
          LIMIT $1
         """,
-        limit,
+        limit, shards, shard,
     )
+    if shards > 1:
+        log.info("Shard %d/%d", shard, shards)
     log.info("Prodotti da arricchire (barcode EAN, senza immagine): %d", len(rows))
     if not rows:
         return 0
@@ -170,7 +183,10 @@ async def main(args: argparse.Namespace) -> None:
         sys.exit("Errore: DATABASE_URL non impostata")
     conn = await asyncpg.connect(DB_URL)
     try:
-        await enrich_images(conn, limit=args.limit, dry_run=args.dry_run)
+        await enrich_images(
+            conn, limit=args.limit, dry_run=args.dry_run,
+            shards=args.shards, shard=args.shard,
+        )
     finally:
         await conn.close()
 
@@ -184,5 +200,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Stampa le immagini trovate senza scrivere nel DB",
+    )
+    parser.add_argument(
+        "--shards", type=int, default=1,
+        help="Numero totale di shard paralleli (default 1 = nessuno sharding)",
+    )
+    parser.add_argument(
+        "--shard", type=int, default=0,
+        help="Indice di questo shard (0..shards-1)",
     )
     asyncio.run(main(parser.parse_args()))
