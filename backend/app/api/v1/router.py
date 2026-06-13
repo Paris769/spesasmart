@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, stores, products, lists, scan, receipts
+from app.api.v1.endpoints import auth, stores, products, lists, scan, receipts, go
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -9,3 +9,4 @@ api_router.include_router(products.router)
 api_router.include_router(lists.router)
 api_router.include_router(scan.router)
 api_router.include_router(receipts.router)
+api_router.include_router(go.router)

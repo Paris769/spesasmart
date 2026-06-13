@@ -1,9 +1,25 @@
 import axios from "axios";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1",
+  baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
 });
+
+/** Instrada un link d'acquisto attraverso /go (tracking + affiliazione + allowlist).
+ *  Se url è assente ritorna "#". */
+export const outbound = (
+  url?: string | null,
+  chain?: string | null,
+  productId?: string | null
+): string => {
+  if (!url) return "#";
+  const p = new URLSearchParams({ u: url });
+  if (chain) p.set("chain", chain);
+  if (productId) p.set("pid", productId);
+  return `${API_BASE}/go?${p.toString()}`;
+};
 
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {

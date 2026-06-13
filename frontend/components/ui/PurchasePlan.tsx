@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { QuickOptimizeResult } from "@/lib/api";
+import { QuickOptimizeResult, outbound } from "@/lib/api";
 import {
   ShoppingBag,
   ExternalLink,
@@ -22,6 +22,7 @@ import {
 type PlanStore = {
   key: string;
   chain_name: string;
+  chain_slug?: string | null;
   shop_url: string | null;
   total: number;
   items: {
@@ -40,6 +41,7 @@ function buildPlans(result: QuickOptimizeResult) {
         {
           key: "single-" + result.best_single.store_id,
           chain_name: result.best_single.chain_name,
+          chain_slug: result.best_single.chain_slug,
           shop_url: result.best_single.shop_url,
           total: result.best_single.total,
           items: result.best_single.items.map((it, i) => ({
@@ -210,7 +212,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                       </span>
                       {it.product_url ? (
                         <a
-                          href={it.product_url}
+                          href={outbound(it.product_url, s.chain_slug)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="shrink-0 inline-flex items-center gap-1 text-[12px] bg-primary text-white px-2.5 py-1 rounded-btn font-medium active:scale-95"
@@ -220,7 +222,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                       ) : (
                         s.shop_url && (
                           <a
-                            href={s.shop_url}
+                            href={outbound(s.shop_url, s.chain_slug)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="shrink-0 text-[12px] text-stone-500 underline"
@@ -235,7 +237,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
               </ul>
               {s.shop_url && (
                 <a
-                  href={s.shop_url}
+                  href={outbound(s.shop_url, s.chain_slug)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-1.5 bg-primary text-white text-sm font-semibold py-2.5 hover:bg-primary-700 transition active:scale-[0.99]"

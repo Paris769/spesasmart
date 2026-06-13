@@ -1,5 +1,5 @@
 "use client";
-import { PriceResult } from "@/lib/api";
+import { PriceResult, outbound } from "@/lib/api";
 import { useCountUp } from "@/lib/useCountUp";
 import {
   Truck,
@@ -153,7 +153,7 @@ export default function PriceCard({ result, rank, avgPrice, imageUrl }: Props) {
 
           {result.shop_url && (
             <a
-              href={result.shop_url}
+              href={outbound(result.shop_url, result.chain_slug)}
               target="_blank"
               rel="noopener noreferrer"
               className={`ml-auto inline-flex items-center gap-1 text-[13px] px-3 py-1.5 rounded-btn font-semibold transition active:scale-95 ${

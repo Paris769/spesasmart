@@ -167,6 +167,17 @@ CREATE TABLE search_log (
 CREATE INDEX idx_search_log_created ON search_log(created_at DESC);
 CREATE INDEX idx_search_log_zero ON search_log(lower(query)) WHERE n_results = 0;
 
+-- Tracciamento click d'acquisto in uscita (monetizzazione: vedi /go e agents/revenue.py)
+CREATE TABLE click_log (
+    id          BIGSERIAL PRIMARY KEY,
+    chain_slug  TEXT,
+    product_id  UUID,
+    target_host TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_click_log_created ON click_log(created_at DESC);
+CREATE INDEX idx_click_log_chain ON click_log(chain_slug);
+
 -- Alert prezzi
 CREATE TABLE price_alerts (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
