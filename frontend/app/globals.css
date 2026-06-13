@@ -2,6 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    @apply bg-surface text-stone-900 antialiased;
+  }
+  /* Prezzi allineati in colonna (dettaglio "fintech") */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Skeleton shimmer per il loading delle card */
+  .skeleton {
+    @apply rounded-md bg-stone-200;
+    background-image: linear-gradient(
+      90deg,
+      #e7e5e4 0px,
+      #f5f5f4 200px,
+      #e7e5e4 400px
+    );
+    background-size: 800px 100%;
+    @apply animate-shimmer;
+  }
+}
+
 /* Leaflet fix in Next.js */
 .leaflet-container {
   height: 100%;
