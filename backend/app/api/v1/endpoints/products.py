@@ -283,13 +283,71 @@ async def get_price_history(
     return [dict(r) for r in result.mappings().all()]
 
 
+@router.get("/seo/sitemap")
+async def seo_sitemap(
+    response: Response,
+    limit: int = Query(5000, le=20000),
+    db: AsyncSession = Depends(get_db),
+):
+    """Elenco prodotti indicizzabili (con almeno un prezzo) per la sitemap SEO."""
+    response.headers["Cache-Control"] = "public, max-age=21600"  # 6h
+    rows = await db.execute(
+        text(
+            """
+            SELECT p.id::text AS id, p.name, p.updated_at,
+                   count(DISTINCT pr.store_id) AS store_count
+            FROM products p
+            JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
+            GROUP BY p.id, p.name, p.updated_at
+            ORDER BY store_count DESC, p.updated_at DESC NULLS LAST
+            LIMIT :limit
+            """
+        ),
+        {"limit": limit},
+    )
+    return [dict(r) for r in rows.mappings().all()]
+
+
 @router.get("/{product_id}")
-async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        text("SELECT * FROM products WHERE id = :id"),
+async def get_product(
+    product_id: str, response: Response, db: AsyncSession = Depends(get_db)
+):
+    """Prodotto + offerte per catena (alimenta la pagina SEO server-rendered)."""
+    response.headers["Cache-Control"] = "public, max-age=600"
+    prod = await db.execute(
+        text(
+            "SELECT id::text, barcode, name, brand, image_url, description, "
+            "unit, unit_quantity FROM products WHERE id = :id"
+        ),
         {"id": product_id},
     )
-    row = result.mappings().first()
+    row = prod.mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="Prodotto non trovato")
-    return dict(row)
+
+    offers = await db.execute(
+        text(
+            """
+            SELECT DISTINCT ON (c.id)
+                   c.name AS chain_name, c.slug AS chain_slug,
+                   pr.price, c.shop_url, pr.product_url
+            FROM prices pr
+            JOIN stores s ON pr.store_id = s.id
+            JOIN chains c ON s.chain_id = c.id
+            WHERE pr.product_id = :id AND pr.is_current = TRUE AND s.is_active = TRUE
+            ORDER BY c.id, pr.price ASC
+            """
+        ),
+        {"id": product_id},
+    )
+    offer_list = sorted(
+        [dict(o) for o in offers.mappings().all()], key=lambda x: float(x["price"])
+    )
+    prices = [float(o["price"]) for o in offer_list]
+    return {
+        **dict(row),
+        "min_price": min(prices) if prices else None,
+        "max_price": max(prices) if prices else None,
+        "store_count": len(offer_list),
+        "offers": offer_list,
+    }
