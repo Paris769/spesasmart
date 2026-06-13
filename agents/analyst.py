@@ -69,9 +69,24 @@ async def main() -> None:
             "coverage_multi_pct": (
                 round(100 * cov["multi"] / cov["tot"], 1) if cov and cov["tot"] else 0
             ),
-            "chains": [dict(r) for r in chains],
-            "zero_result_searches": [dict(r) for r in zero],
-            "top_searches": [dict(r) for r in top],
+            # Conversione esplicita: i numeric del DB (Decimal) altrimenti
+            # finirebbero come stringhe in JSON (default=str) e romperebbero i
+            # confronti negli agenti a valle.
+            "chains": [
+                {
+                    "slug": r["slug"],
+                    "has_online_shop": bool(r["has_online_shop"]),
+                    "prezzi": int(r["prezzi"] or 0),
+                    "eta_ore": float(r["eta_ore"]) if r["eta_ore"] is not None else None,
+                }
+                for r in chains
+            ],
+            "zero_result_searches": [
+                {"q": r["q"], "n": int(r["n"])} for r in zero
+            ],
+            "top_searches": [
+                {"q": r["q"], "n": int(r["n"])} for r in top
+            ],
         }
         write_state("metrics.json", metrics)
         print(
