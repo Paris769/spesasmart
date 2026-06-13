@@ -11,14 +11,15 @@ compiere azioni pubbliche o finanziarie — solo proporre.
 """
 import asyncio
 
-from agents import analyst, growth, product
+from agents import analyst, growth, product, revenue
 
 
 async def main() -> None:
     print("=== Orchestratore rete agenti ===")
-    await analyst.main()      # async: tocca il DB
+    await analyst.main()      # async: tocca il DB → metrics.json
     growth.main()             # sync: legge metrics.json, apre issue
     product.main()
+    await revenue.main()      # async: legge click_log → proposta monetizzazione
     print("=== Fine ===")
 
 

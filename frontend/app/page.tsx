@@ -258,6 +258,10 @@ export default function HomePage() {
                   <strong className="text-deep">{prices.length}</strong> prezzi — spesa online e
                   negozi entro {radiusKm} km
                 </p>
+                <p className="text-[11px] text-stone-400 -mt-1">
+                  La classifica è ordinata solo per prezzo. Alcuni link “Acquista”
+                  possono essere affiliati (ADV).
+                </p>
                 <div className="flex flex-col gap-3">
                   {prices.map((p, i) => (
                     <PriceCard
