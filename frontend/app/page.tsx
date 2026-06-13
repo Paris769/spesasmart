@@ -230,19 +230,48 @@ export default function HomePage() {
             />
           )}
 
-          {!loadingPrices && prices && prices.length > 0 && (
-            <>
-              <p className="text-sm text-stone-500">
-                <strong className="text-deep">{prices.length}</strong> prezzi — spesa online e
-                negozi entro {radiusKm} km
-              </p>
-              <div className="flex flex-col gap-3">
-                {prices.map((p, i) => (
-                  <PriceCard key={`${p.store_id}-${i}`} result={p} rank={i} />
-                ))}
-              </div>
-            </>
-          )}
+          {!loadingPrices && prices && prices.length > 0 && (() => {
+            const avg = prices.reduce((s, p) => s + p.price, 0) / prices.length;
+            const best = prices[0];
+            const worst = prices[prices.length - 1];
+            const maxSave = worst.price - best.price;
+            return (
+              <>
+                {/* Hero "miglior affare" */}
+                {prices.length > 1 && maxSave > 0.01 && (
+                  <div className="relative overflow-hidden rounded-2xl bg-hero-grad text-white p-4 shadow-float">
+                    <div className="absolute inset-0 bg-mesh" aria-hidden />
+                    <div className="relative">
+                      <p className="text-[12px] font-medium text-white/80">
+                        Miglior prezzo da {best.chain_name}
+                      </p>
+                      <p className="text-price-xl tnum mt-0.5">€{best.price.toFixed(2)}</p>
+                      <p className="text-[13px] text-white/90 mt-0.5">
+                        fino a <strong className="tnum">€{maxSave.toFixed(2)}</strong> in meno
+                        rispetto al più caro
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-sm text-stone-500">
+                  <strong className="text-deep">{prices.length}</strong> prezzi — spesa online e
+                  negozi entro {radiusKm} km
+                </p>
+                <div className="flex flex-col gap-3">
+                  {prices.map((p, i) => (
+                    <PriceCard
+                      key={`${p.store_id}-${i}`}
+                      result={p}
+                      rank={i}
+                      avgPrice={avg}
+                      imageUrl={selectedProduct.image_url}
+                    />
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
