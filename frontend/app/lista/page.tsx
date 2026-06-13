@@ -4,6 +4,7 @@ import { optimizeQuick, QuickOptimizeResult } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
 import PurchasePlan from "@/components/ui/PurchasePlan";
+import { PencilLine, Calculator, ShoppingBag } from "lucide-react";
 
 export default function ListaPage() {
   const { location, radiusKm } = useAppStore();
@@ -60,6 +61,40 @@ export default function ListaPage() {
         <h1 className="text-xl font-bold text-gray-800">La tua lista della spesa</h1>
         <p className="text-sm text-gray-500">
           Scrivi cosa ti serve: ti dico <b>dove costa meno</b> tra i negozi vicini.
+        </p>
+      </div>
+
+      {/* Spiegazione sempre visibile: fa scoprire l'assistente d'acquisto
+          ancora prima di ottimizzare (compariva solo a risultati pronti). */}
+      <div className="rounded-card border border-primary/20 bg-primary-50/60 p-3">
+        <div className="flex items-center gap-2 mb-2.5">
+          <div className="w-7 h-7 rounded-full bg-primary grid place-items-center">
+            <ShoppingBag size={15} className="text-white" />
+          </div>
+          <p className="text-sm font-bold text-deep">
+            Assistente acquisto — ti accompagna fino al carrello
+          </p>
+        </div>
+        <ol className="grid grid-cols-3 gap-2 text-center">
+          {[
+            { Icon: PencilLine, t: "Scrivi la lista" },
+            { Icon: Calculator, t: "Trova dove costa meno" },
+            { Icon: ShoppingBag, t: "Apri e compra guidato" },
+          ].map(({ Icon, t }, i) => (
+            <li key={i} className="flex flex-col items-center gap-1">
+              <div className="relative">
+                <Icon size={20} className="text-primary" />
+                <span className="absolute -top-1.5 -right-2 w-4 h-4 rounded-full bg-primary text-white text-[10px] font-bold grid place-items-center">
+                  {i + 1}
+                </span>
+              </div>
+              <span className="text-[11px] leading-tight text-stone-600">{t}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="text-[11px] text-stone-400 mt-2 text-center">
+          Serve la posizione attiva. Ogni prodotto si apre già pronto sul sito del
+          supermercato dove sei loggato.
         </p>
       </div>
 
