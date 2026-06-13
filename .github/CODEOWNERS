@@ -1,0 +1,11 @@
+# Gate di revisione umana per la rete di agenti.
+# Qualsiasi PR aperta dagli agenti (branch agent/*) tocca questi path e richiede
+# l'approvazione del proprietario prima del merge. Gli agenti NON mergiano mai
+# in autonomia: propongono via Issue e, se accettate, via PR su agent/*.
+
+# Aree sensibili: vanno SEMPRE riviste da un umano.
+/infra/                @Paris769
+/render.yaml           @Paris769
+/.github/workflows/    @Paris769
+/backend/app/core/     @Paris769
+/agents/               @Paris769

@@ -153,6 +153,20 @@ CREATE TABLE list_items (
     sort_order  INTEGER DEFAULT 0
 );
 
+-- Telemetria ricerche (alimenta gli agenti: cosa cercano gli utenti, cosa NON
+-- trova risultati = gap di catalogo/feature). Vedi agents/.
+CREATE TABLE search_log (
+    id          BIGSERIAL PRIMARY KEY,
+    query       TEXT NOT NULL,
+    n_results   INTEGER NOT NULL DEFAULT 0,
+    lat         DOUBLE PRECISION,
+    lng         DOUBLE PRECISION,
+    radius_km   NUMERIC(5,1),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_search_log_created ON search_log(created_at DESC);
+CREATE INDEX idx_search_log_zero ON search_log(lower(query)) WHERE n_results = 0;
+
 -- Alert prezzi
 CREATE TABLE price_alerts (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

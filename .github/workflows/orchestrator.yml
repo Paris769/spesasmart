@@ -1,0 +1,43 @@
+name: Rete agenti (orchestratore)
+
+# Esegue la rete di agenti che fa progredire l'app da sola: Analyst calcola i
+# KPI, Growth e Product aprono Issue di proposta (espansione, backlog).
+# I segreti sono SOLO DATABASE_URL (lettura) e GITHUB_TOKEN (apertura issue):
+# per design gli agenti non possono pubblicare contenuti, spendere o mergiare.
+# Gira di notte dopo lo scrape, così analizza dati freschi.
+
+on:
+  schedule:
+    - cron: "30 5 * * *"   # 05:30 UTC, dopo scraper (02:00) e cosicomodo (04:30)
+  workflow_dispatch:
+
+permissions:
+  issues: write            # serve a Growth/Product per aprire/aggiornare le Issue
+  contents: read
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agents/requirements.txt
+      - run: pip install -r agents/requirements.txt
+      - name: Esegui orchestratore
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: python -m agents.orchestrator
+      - name: Salva stato agenti
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-state
+          path: agents/state/*.json
+          if-no-files-found: ignore
+          retention-days: 14
