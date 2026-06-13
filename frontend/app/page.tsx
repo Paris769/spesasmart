@@ -5,19 +5,27 @@ import { searchProducts, getProductPrices, Product } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
 import PriceCard from "@/components/ui/PriceCard";
+import { PriceCardSkeletonList } from "@/components/ui/PriceCardSkeleton";
+import EmptyState from "@/components/ui/EmptyState";
+import {
+  Search,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ShoppingCart,
+  PackageOpen,
+  MapPin,
+} from "lucide-react";
 
 export default function HomePage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  // Storico di navigazione: trail = prodotti visitati in sequenza,
-  // trailPos = posizione corrente (-1 = vista risultati di ricerca).
   const [trail, setTrail] = useState<Product[]>([]);
   const [trailPos, setTrailPos] = useState(-1);
   const [baseQuery, setBaseQuery] = useState("");
   const { location, radiusKm, searchArea } = useAppStore();
 
-  // Debounce: aspetta 350ms dopo l'ultima digitazione prima di cercare
   useEffect(() => {
     if (selectedProduct) return;
     const t = setTimeout(() => setDebouncedQuery(query), 350);
@@ -27,13 +35,7 @@ export default function HomePage() {
   const { data: products, isFetching: searching } = useQuery({
     queryKey: ["search", debouncedQuery, location, radiusKm, searchArea],
     queryFn: () =>
-      searchProducts(
-        debouncedQuery,
-        location?.lat,
-        location?.lng,
-        radiusKm,
-        searchArea
-      ),
+      searchProducts(debouncedQuery, location?.lat, location?.lng, radiusKm, searchArea),
     enabled: debouncedQuery.length >= 2 && !selectedProduct,
     staleTime: 30_000,
   });
@@ -41,18 +43,10 @@ export default function HomePage() {
   const { data: prices, isFetching: loadingPrices } = useQuery({
     queryKey: ["prices", selectedProduct?.id, location, radiusKm, searchArea],
     queryFn: () =>
-      getProductPrices(
-        selectedProduct!.id,
-        location!.lat,
-        location!.lng,
-        radiusKm,
-        searchArea
-      ),
+      getProductPrices(selectedProduct!.id, location!.lat, location!.lng, radiusKm, searchArea),
     enabled: !!selectedProduct && !!location,
   });
 
-  // ── Navigazione avanti/indietro ────────────────────────────────────────────
-  // Apertura di un prodotto dalla lista: lo aggiunge allo storico.
   const openProduct = (p: Product) => {
     setTrail((t) => [...t.slice(0, trailPos + 1), p]);
     setTrailPos((i) => i + 1);
@@ -61,7 +55,6 @@ export default function HomePage() {
     setDebouncedQuery(p.name);
   };
 
-  // Salta a una posizione dello storico (-1 = risultati di ricerca).
   const applyPos = (pos: number) => {
     setTrailPos(pos);
     if (pos < 0) {
@@ -76,7 +69,6 @@ export default function HomePage() {
     }
   };
 
-  // Nuova ricerca digitata: azzera lo storico.
   const resetTrail = (q: string) => {
     setBaseQuery(q);
     setTrail([]);
@@ -90,27 +82,29 @@ export default function HomePage() {
     <div className="flex flex-col gap-4">
       <LocationBar />
 
-      {/* Barra di ricerca con frecce avanti/indietro */}
+      {/* Barra di ricerca */}
       <div className="flex items-stretch gap-2">
         <button
           onClick={() => applyPos(trailPos - 1)}
           disabled={!canGoBack}
           aria-label="Indietro"
-          title="Indietro"
-          className="shrink-0 w-11 rounded-xl border-2 border-gray-200 text-xl text-gray-600 hover:border-primary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed transition"
+          className="shrink-0 w-11 grid place-items-center rounded-btn border border-stone-200 bg-white text-stone-600 hover:border-primary hover:text-primary disabled:opacity-30 transition"
         >
-          ←
+          <ChevronLeft size={20} />
         </button>
         <button
           onClick={() => applyPos(trailPos + 1)}
           disabled={!canGoForward}
           aria-label="Avanti"
-          title="Avanti"
-          className="shrink-0 w-11 rounded-xl border-2 border-gray-200 text-xl text-gray-600 hover:border-primary hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed transition"
+          className="shrink-0 w-11 grid place-items-center rounded-btn border border-stone-200 bg-white text-stone-600 hover:border-primary hover:text-primary disabled:opacity-30 transition"
         >
-          →
+          <ChevronRight size={20} />
         </button>
         <div className="relative flex-1">
+          <Search
+            size={18}
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"
+          />
           <input
             type="text"
             value={query}
@@ -119,51 +113,66 @@ export default function HomePage() {
               setSelectedProduct(null);
               resetTrail(e.target.value);
             }}
-            placeholder="Cerca un prodotto… es. latte intero, pasta barilla"
-            className="w-full border-2 border-gray-200 focus:border-primary rounded-xl px-4 py-3 text-lg outline-none transition"
+            placeholder="Cerca un prodotto…"
+            className="w-full bg-white border border-stone-200 focus:border-primary focus:ring-2 focus:ring-primary/15 rounded-pill pl-10 pr-10 py-3 text-base outline-none transition shadow-card"
           />
           {query && (
             <button
-              onClick={() => { setQuery(""); setSelectedProduct(null); resetTrail(""); }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-xl"
+              onClick={() => {
+                setQuery("");
+                setSelectedProduct(null);
+                resetTrail("");
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700"
+              aria-label="Pulisci"
             >
-              ×
+              <X size={18} />
             </button>
           )}
         </div>
       </div>
 
+      {/* Skeleton durante la ricerca */}
+      {!selectedProduct && searching && debouncedQuery.length >= 2 && (
+        <PriceCardSkeletonList n={4} />
+      )}
+
       {/* Suggerimenti prodotti */}
-      {!selectedProduct && products && products.length > 0 && (
+      {!selectedProduct && !searching && products && products.length > 0 && (
         <div>
-          <p className="text-xs text-gray-400 mb-1 px-1">
-            {products.length} prodotti trovati — seleziona per vedere i prezzi vicino a te
+          <p className="text-xs text-stone-400 mb-1.5 px-1">
+            {products.length} prodotti — tocca per vedere i prezzi vicino a te
           </p>
-          <ul className="bg-white border rounded-xl shadow-sm divide-y overflow-y-auto max-h-[60vh]">
+          <ul className="bg-white border border-stone-200 rounded-card shadow-card divide-y divide-stone-100 overflow-y-auto max-h-[62vh]">
             {products.map((p) => (
               <li key={p.id}>
                 <button
                   onClick={() => openProduct(p)}
-                  className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3"
+                  className="w-full text-left px-4 py-3 hover:bg-surface active:bg-stone-100 flex items-center gap-3 transition"
                 >
                   {p.image_url ? (
-                    <img src={p.image_url} alt={p.name} className="w-10 h-10 object-contain rounded shrink-0" />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.image_url}
+                      alt={p.name}
+                      className="w-11 h-11 object-contain rounded-lg shrink-0 bg-white"
+                    />
                   ) : (
-                    <div className="w-10 h-10 rounded shrink-0 bg-gray-100 flex items-center justify-center text-gray-300 text-lg">
-                      🛒
+                    <div className="w-11 h-11 rounded-lg shrink-0 bg-stone-100 grid place-items-center text-stone-300">
+                      <ShoppingCart size={18} />
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 text-sm">{p.name}</p>
-                    {p.brand && <p className="text-xs text-gray-500">{p.brand}</p>}
+                    <p className="font-medium text-stone-900 text-sm leading-snug">{p.name}</p>
+                    {p.brand && <p className="text-xs text-stone-400">{p.brand}</p>}
                   </div>
                   {p.min_price != null && (
                     <div className="text-right shrink-0">
-                      <p className="text-sm font-bold text-primary">
+                      <p className="text-sm font-bold text-primary tnum">
                         €{Number(p.min_price).toFixed(2)}
                       </p>
                       {p.price_store_count ? (
-                        <p className="text-[10px] text-gray-400">
+                        <p className="text-[10px] text-stone-400">
                           {p.price_store_count} negoz{p.price_store_count > 1 ? "i" : "io"}
                         </p>
                       ) : null}
@@ -176,46 +185,56 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Nessun risultato di ricerca */}
+      {!selectedProduct && !searching && debouncedQuery.length >= 2 && products && products.length === 0 && (
+        <EmptyState
+          Icon={PackageOpen}
+          title="Nessun prodotto trovato"
+          subtitle={`Nessun risultato per "${debouncedQuery}". Prova con un termine più generico.`}
+        />
+      )}
+
       {/* Risultati prezzi */}
       {selectedProduct && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
             {selectedProduct.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={selectedProduct.image_url}
                 alt={selectedProduct.name}
-                className="w-16 h-16 object-contain rounded-lg border"
+                className="w-16 h-16 object-contain rounded-card border border-stone-200 bg-white"
               />
             )}
             <div>
-              <h2 className="text-lg font-bold text-gray-900">{selectedProduct.name}</h2>
+              <h2 className="text-lg font-bold text-deep leading-tight">{selectedProduct.name}</h2>
               {selectedProduct.brand && (
-                <p className="text-sm text-gray-500">{selectedProduct.brand}</p>
+                <p className="text-sm text-stone-500">{selectedProduct.brand}</p>
               )}
             </div>
           </div>
 
           {!location && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-              📍 Attiva la posizione per vedere i prezzi vicino a te
+            <div className="bg-accent-50 border border-accent/30 rounded-card p-4 text-sm text-accent-600 flex items-center gap-2">
+              <MapPin size={16} /> Attiva la posizione per vedere i prezzi vicino a te
             </div>
           )}
 
-          {loadingPrices && (
-            <div className="text-center py-8 text-gray-500">Ricerca prezzi in corso…</div>
+          {loadingPrices && <PriceCardSkeletonList n={4} />}
+
+          {!loadingPrices && prices && prices.length === 0 && (
+            <EmptyState
+              Icon={MapPin}
+              title="Nessun prezzo nei dintorni"
+              subtitle="Prova ad allargare il raggio di ricerca o l'area sulla mappa."
+            />
           )}
 
-          {prices && prices.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              Nessun prezzo trovato
-            </div>
-          )}
-
-          {prices && prices.length > 0 && (
+          {!loadingPrices && prices && prices.length > 0 && (
             <>
-              <p className="text-sm text-gray-600">
-                Trovati <strong>{prices.length}</strong> prezzi — spesa online
-                e negozi entro {radiusKm} km
+              <p className="text-sm text-stone-500">
+                <strong className="text-deep">{prices.length}</strong> prezzi — spesa online e
+                negozi entro {radiusKm} km
               </p>
               <div className="flex flex-col gap-3">
                 {prices.map((p, i) => (
@@ -227,15 +246,13 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Stato vuoto */}
+      {/* Stato iniziale */}
       {!query && !selectedProduct && (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-4xl mb-3">🛒</p>
-          <p className="text-lg font-medium">Trova il prezzo migliore</p>
-          <p className="text-sm mt-1">
-            Cerca qualsiasi prodotto e confronta i prezzi nei supermercati vicino a te
-          </p>
-        </div>
+        <EmptyState
+          Icon={ShoppingCart}
+          title="Trova il prezzo migliore"
+          subtitle="Cerca qualsiasi prodotto e confronta i prezzi nei supermercati vicino a te."
+        />
       )}
     </div>
   );
