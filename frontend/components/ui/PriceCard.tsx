@@ -1,39 +1,52 @@
+"use client";
 import { PriceResult } from "@/lib/api";
+import { useCountUp } from "@/lib/useCountUp";
 import {
   Truck,
   Store,
   Tag,
   Globe,
   Clock,
-  CheckCircle2,
+  Crown,
   ArrowUpRight,
+  TrendingDown,
+  ShoppingCart,
 } from "lucide-react";
 
 interface Props {
   result: PriceResult;
   rank: number;
+  avgPrice?: number; // media dei prezzi del set → delta "-X% vs media"
+  imageUrl?: string | null;
 }
 
-// Colore del chip-catena (brand) — testo neutro, sfondo tenue.
-const CHAIN_COLORS: Record<string, string> = {
-  esselunga: "bg-blue-100 text-blue-800",
-  conad: "bg-red-100 text-red-800",
-  carrefour: "bg-orange-100 text-orange-800",
-  coop: "bg-teal-100 text-teal-800",
-  lidl: "bg-yellow-100 text-yellow-800",
-  pam: "bg-purple-100 text-purple-800",
-  famila: "bg-rose-100 text-rose-800",
-  ilgigante: "bg-amber-100 text-amber-800",
-  italmark: "bg-cyan-100 text-cyan-800",
+// Pallino col colore di brand della catena (l'arancio resta riservato ai deal).
+const CHAIN_DOT: Record<string, string> = {
+  esselunga: "#E2001A",
+  conad: "#E30613",
+  carrefour: "#004E9F",
+  coop: "#E2001A",
+  lidl: "#0050AA",
+  pam: "#C8102E",
+  famila: "#E2001A",
+  ilgigante: "#F39200",
+  italmark: "#0093D0",
 };
 
-export default function PriceCard({ result, rank }: Props) {
+export default function PriceCard({ result, rank, avgPrice, imageUrl }: Props) {
   const isBest = rank === 0;
-  const chainColor =
-    CHAIN_COLORS[result.chain_slug] ?? "bg-stone-100 text-stone-700";
+  const dot = CHAIN_DOT[result.chain_slug] ?? "#6B7280";
+  const price = useCountUp(result.price, 480);
+  const [eur, cent] = price.toFixed(2).split(".");
+
   const savings =
     result.original_price && result.original_price > result.price
       ? (result.original_price - result.price).toFixed(2)
+      : null;
+
+  const deltaPct =
+    avgPrice && avgPrice > result.price
+      ? Math.round(((avgPrice - result.price) / avgPrice) * 100)
       : null;
 
   const freshness = (() => {
@@ -46,74 +59,87 @@ export default function PriceCard({ result, rank }: Props) {
 
   return (
     <div
-      className={`relative rounded-card border p-4 flex flex-col gap-2 shadow-card transition active:scale-[0.99] ${
+      className={`relative overflow-hidden rounded-2xl p-3.5 flex gap-3 animate-pop-in transition active:scale-[0.99] ${
         isBest
-          ? "border-primary/30 ring-1 ring-primary/30 bg-primary-50"
-          : "border-stone-200 bg-white"
+          ? "bg-primary-50 ring-1 ring-primary/40 shadow-best"
+          : "bg-white border border-stone-200 shadow-card"
       }`}
     >
-      {/* barra convenienza (rank) a sinistra */}
-      <span
-        className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${
-          rank === 0
-            ? "bg-success"
-            : rank === 1
-            ? "bg-lime-400"
-            : rank === 2
-            ? "bg-warning"
-            : "bg-stone-200"
-        }`}
-        aria-hidden
-      />
+      {/* sheen che attraversa la card migliore */}
+      {isBest && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-white/40 blur-md animate-sheen"
+        />
+      )}
 
-      <div className="flex items-start justify-between gap-3 pl-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-pill ${chainColor}`}>
-              {result.chain_name}
-            </span>
-            {isBest && (
-              <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-primary">
-                <CheckCircle2 size={13} /> Miglior prezzo
-              </span>
-            )}
-          </div>
-          <p className="text-sm font-medium text-stone-900 mt-1.5">{result.store_name}</p>
-          <p className="text-[13px] text-stone-500 flex items-center gap-1">
-            {result.is_online ? (
-              <>
-                <Globe size={13} /> Spesa online · consegna in tutta Italia
-              </>
-            ) : (
-              <>
-                <Store size={13} /> {result.address} · {result.distance_km} km
-              </>
-            )}
-          </p>
-        </div>
-
-        <div className="text-right shrink-0">
-          <p className="text-[28px] leading-8 font-bold text-deep tnum">
-            €{result.price.toFixed(2)}
-          </p>
-          {result.original_price && (
-            <p className="text-sm line-through text-stone-400 tnum">
-              €{result.original_price.toFixed(2)}
-            </p>
-          )}
-          {result.price_per_unit && (
-            <p className="text-[11px] text-stone-500 tnum">
-              €{result.price_per_unit.toFixed(2)}/kg
-            </p>
-          )}
-        </div>
+      {/* immagine prodotto */}
+      <div className="shrink-0 w-[60px] h-[60px] rounded-xl bg-white border border-stone-200 grid place-items-center overflow-hidden">
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={imageUrl} alt="" className="w-full h-full object-contain" />
+        ) : (
+          <ShoppingCart size={22} className="text-stone-300" />
+        )}
       </div>
 
-      {(result.promo_label || savings) && (
-        <div className="flex flex-wrap gap-1.5 pl-2">
+      {/* corpo */}
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-deep"
+          >
+            <span className="w-2 h-2 rounded-full" style={{ background: dot }} />
+            {result.chain_name}
+          </span>
+          {isBest && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-white bg-save-grad px-1.5 py-0.5 rounded-pill">
+              <Crown size={11} /> MIGLIORE
+            </span>
+          )}
+        </div>
+
+        <p className="text-[13px] text-stone-500 flex items-center gap-1 leading-tight">
+          {result.is_online ? (
+            <>
+              <Globe size={13} /> Spesa online · tutta Italia
+            </>
+          ) : (
+            <>
+              <Store size={13} /> {result.distance_km} km · {result.store_name}
+            </>
+          )}
+        </p>
+
+        <div className="flex items-end gap-2 mt-0.5 flex-wrap">
+          {/* prezzo eroe: euro grande, centesimi piccoli */}
+          <span className="text-deep font-extrabold tnum leading-none flex items-start">
+            <span className="text-[15px] mt-0.5 mr-0.5">€</span>
+            <span className="text-price">{eur}</span>
+            <span className="text-[16px] mt-0.5">,{cent}</span>
+          </span>
+          {result.original_price && (
+            <span className="text-sm line-through text-stone-400 tnum mb-0.5">
+              €{result.original_price.toFixed(2)}
+            </span>
+          )}
+          {deltaPct && deltaPct >= 1 && (
+            <span className="mb-0.5 inline-flex items-center gap-0.5 text-[11px] font-bold text-success bg-primary-50 px-1.5 py-0.5 rounded-pill">
+              <TrendingDown size={11} /> -{deltaPct}% vs media
+            </span>
+          )}
+        </div>
+
+        {/* riga badge + CTA */}
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+          {result.price_per_unit && (
+            <span className="text-[11px] text-stone-500 tnum">
+              €{result.price_per_unit.toFixed(2)}/kg
+            </span>
+          )}
           {result.promo_label && (
             <span className="inline-flex items-center gap-1 text-[11px] bg-accent-50 text-accent font-semibold px-2 py-0.5 rounded-pill">
-              <Tag size={12} /> {result.promo_label}
+              <Tag size={11} /> {result.promo_label}
             </span>
           )}
           {savings && (
@@ -121,35 +147,30 @@ export default function PriceCard({ result, rank }: Props) {
               Risparmi €{savings}
             </span>
           )}
-        </div>
-      )}
+          {result.has_delivery && (
+            <Truck size={13} className="text-blue-600" aria-label="Consegna" />
+          )}
 
-      <div className="flex items-center gap-2 mt-1 flex-wrap pl-2">
-        {result.has_delivery && (
-          <span className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-pill">
-            <Truck size={12} /> Consegna
-          </span>
-        )}
-        {result.has_click_collect && (
-          <span className="inline-flex items-center gap-1 text-[11px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded-pill">
-            <Store size={12} /> Click &amp; Collect
-          </span>
-        )}
-        {result.shop_url && (
-          <a
-            href={result.shop_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-[13px] bg-primary text-white px-3 py-1.5 rounded-btn font-semibold hover:bg-primary-700 transition active:scale-95"
-          >
-            Acquista <ArrowUpRight size={15} />
-          </a>
-        )}
-        {freshness && (
-          <span className={`inline-flex items-center gap-1 text-[11px] ${freshness.tone} ${result.shop_url ? "" : "ml-auto"}`}>
-            <Clock size={11} /> {freshness.label}
-          </span>
-        )}
+          {result.shop_url && (
+            <a
+              href={result.shop_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`ml-auto inline-flex items-center gap-1 text-[13px] px-3 py-1.5 rounded-btn font-semibold transition active:scale-95 ${
+                isBest
+                  ? "bg-primary text-white hover:bg-primary-700"
+                  : "bg-stone-900 text-white hover:bg-stone-700"
+              }`}
+            >
+              Acquista <ArrowUpRight size={15} />
+            </a>
+          )}
+          {freshness && !result.shop_url && (
+            <span className={`ml-auto inline-flex items-center gap-1 text-[11px] ${freshness.tone}`}>
+              <Clock size={11} /> {freshness.label}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
