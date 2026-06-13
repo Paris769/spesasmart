@@ -194,7 +194,7 @@ export interface QuickOptimizeResult {
 }
 
 export const optimizeQuick = (
-  items: { query: string; quantity?: number }[],
+  items: { query: string; quantity?: number; product_id?: string }[],
   lat: number,
   lng: number,
   radiusKm: number
