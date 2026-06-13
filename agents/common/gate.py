@@ -23,6 +23,7 @@ LABELS = {
     "product": "1d76db",
     "backlog/auto": "c5def5",
     "needs-human": "d93f0b",
+    "channel:social": "fbca04",
 }
 
 

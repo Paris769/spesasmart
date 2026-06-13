@@ -11,7 +11,7 @@ compiere azioni pubbliche o finanziarie — solo proporre.
 """
 import asyncio
 
-from agents import analyst, growth, product, revenue
+from agents import analyst, growth, product, revenue, marketing
 
 
 async def main() -> None:
@@ -20,6 +20,7 @@ async def main() -> None:
     growth.main()             # sync: legge metrics.json, apre issue
     product.main()
     await revenue.main()      # async: legge click_log → proposta monetizzazione
+    await marketing.main()    # async: bozze contenuti (draft-only) → proposta
     print("=== Fine ===")
 
 
