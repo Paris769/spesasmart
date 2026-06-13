@@ -96,18 +96,29 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
     });
 
   return (
-    <div className="rounded-card border border-stone-200 bg-white shadow-card p-4 flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-full bg-primary-50 grid place-items-center">
-          <ShoppingBag size={17} className="text-primary" />
-        </div>
-        <div>
-          <p className="font-bold text-deep leading-tight">Assistente acquisto</p>
-          <p className="text-[12px] text-stone-500">
-            Apri i prodotti, aggiungili e paga sul sito ufficiale
-          </p>
+    <div className="rounded-card border-2 border-primary/40 bg-white shadow-best ring-1 ring-primary/10 overflow-hidden flex flex-col">
+      {/* Header a gradiente: rende l'assistente l'azione evidente tra le card */}
+      <div className="bg-hero-grad text-white px-4 py-3 relative overflow-hidden">
+        <div className="absolute inset-0 bg-mesh opacity-60" aria-hidden />
+        <div className="relative flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-full bg-white/20 grid place-items-center shrink-0">
+            <ShoppingBag size={18} className="text-white" />
+          </div>
+          <div>
+            <p className="font-bold leading-tight flex items-center gap-2">
+              Fai la spesa ora
+              <span className="text-[10px] font-bold uppercase tracking-wide bg-white/25 px-1.5 py-0.5 rounded-pill">
+                guidato
+              </span>
+            </p>
+            <p className="text-[12px] text-white/85">
+              Apri i prodotti, aggiungili e paga sul sito ufficiale
+            </p>
+          </div>
         </div>
       </div>
+
+      <div className="p-4 flex flex-col gap-3">
 
       {/* Scelta strategia */}
       {mode === null && (
@@ -255,6 +266,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
           </p>
         </div>
       )}
+      </div>
     </div>
   );
 }
