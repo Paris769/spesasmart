@@ -1,0 +1,58 @@
+name: OpenClaw security config
+
+on:
+  push:
+    paths:
+      - "agents/openclaw/**"
+      - ".github/workflows/openclaw-security.yml"
+  pull_request:
+    paths:
+      - "agents/openclaw/**"
+
+jobs:
+  static-checks:
+    name: Verify hardening of agents/openclaw/
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest==9.0.3
+
+      - name: Run security configuration tests
+        run: python -m pytest agents/openclaw/tests/ -v
+
+      - name: Shell-lint hardening scripts
+        run: |
+          sudo apt-get install -y shellcheck >/dev/null
+          shellcheck agents/openclaw/docker/entrypoint.sh
+          shellcheck agents/openclaw/policy/setup-egress-firewall.sh
+          shellcheck agents/openclaw/policy/branch-protection.sh
+
+      - name: Lint webhook proxy (TypeScript)
+        working-directory: agents/openclaw/proxy
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc --noEmit
+
+  secret-scan:
+    name: Block accidental secret commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config-path: agents/openclaw/.gitleaks.toml
