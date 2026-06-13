@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -440,10 +441,10 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
         ],
     }
 
-    # Salva risultato nella lista
+    # Salva risultato nella lista (colonna JSONB → JSON valido, non str(dict))
     await db.execute(
-        text("UPDATE shopping_lists SET optimization_result = :res WHERE id = :lid"),
-        {"res": str(result), "lid": list_id},
+        text("UPDATE shopping_lists SET optimization_result = CAST(:res AS jsonb) WHERE id = :lid"),
+        {"res": json.dumps(result, default=str), "lid": list_id},
     )
     await db.commit()
     return result

@@ -1,0 +1,44 @@
+name: Arricchimento immagini
+
+# Riempie le foto mancanti abbinando le immagini di Open Food Facts PER CODICE
+# A BARRE (match 100% corretto: il barcode è univoco a livello mondiale).
+# Rispetta il rate-limit OFF (15 req/min/IP) → ~1200 prodotti/run. È ripetibile
+# (processa solo i prodotti ancora senza foto), quindi più run completano il
+# backlog. Per riempire in fretta usare il dump bulk OFF (vedi agents/README).
+
+on:
+  schedule:
+    # 4 volte al giorno, in slot che non collidono con scraper/cosicomodo/guardian
+    - cron: "15 1,9,13,21 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Prodotti da esaminare in questo run"
+        required: false
+        default: "1200"
+        type: string
+      dry_run:
+        description: "Dry run (non scrive)"
+        required: false
+        default: "false"
+        type: boolean
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+      - run: pip install -r scraping/requirements.txt
+      - name: Arricchisci immagini
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          FLAGS="--limit ${{ inputs.limit || '1200' }}"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then FLAGS="$FLAGS --dry-run"; fi
+          python -m scraping.enrich_images $FLAGS

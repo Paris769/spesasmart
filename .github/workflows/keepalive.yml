@@ -1,0 +1,21 @@
+name: Keep-alive backend
+
+# Il servizio Render free va in sleep dopo ~15 min di inattività: il primo
+# accesso dopo lo sleep costa ~50s. Un ping ogni 13 min lo tiene sveglio.
+# /ping è leggero e NON tocca il DB. NB: GitHub può ritardare/disabilitare i
+# cron su repo inattivi — UptimeRobot resta il backup consigliato (vedi DEPLOY.md).
+
+on:
+  schedule:
+    - cron: "*/13 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /ping
+        run: |
+          curl -fsS --max-time 30 https://spesasmart-backend-4kyf.onrender.com/ping \
+            && echo " — backend sveglio" \
+            || echo "::warning::ping fallito (backend in cold-start o down)"
