@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useState } from "react";
 import {
@@ -84,7 +84,7 @@ function parseRequest(text: string): AgentItem[] {
 }
 
 export default function AgentePage() {
-  const { location, radiusKm } = useAppStore();
+  const { location, radiusKm, setLocation } = useAppStore();
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
   const [items, setItems] = useState<AgentItem[]>(() => parseRequest("spesa per la settimana"));
   const [manualItem, setManualItem] = useState("");
@@ -119,15 +119,42 @@ export default function AgentePage() {
     setResult(null);
   };
 
+  const requestCurrentLocation = () =>
+    new Promise<{ lat: number; lng: number; label: string }>((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("Geolocalizzazione non supportata"));
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            label: "Posizione attuale",
+          }),
+        () => reject(new Error("Posizione non disponibile")),
+        { timeout: 10000, maximumAge: 60000 }
+      );
+    });
+
   const runAgent = async () => {
-    if (!location || items.length === 0) return;
+    if (items.length === 0) return;
     setLoading(true);
     setError(null);
     try {
-      const plan = await optimizeQuick(items, location.lat, location.lng, radiusKm);
+      let activeLocation = location;
+      if (!activeLocation) {
+        activeLocation = await requestCurrentLocation();
+        setLocation(activeLocation);
+      }
+
+      const plan = await optimizeQuick(items, activeLocation.lat, activeLocation.lng, radiusKm);
       setResult(plan);
     } catch {
-      setError("Non sono riuscito a preparare il piano. Riprova tra poco.");
+      setError(
+        "Non sono riuscito a preparare il piano. Attiva la posizione e riprova."
+      );
     } finally {
       setLoading(false);
     }
@@ -216,21 +243,21 @@ export default function AgentePage() {
 
       <button
         onClick={runAgent}
-        disabled={!location || items.length === 0 || loading}
+        disabled={items.length === 0 || loading}
         className="inline-flex items-center justify-center gap-2 bg-secondary text-white px-4 py-3 rounded-xl text-sm font-bold disabled:opacity-50 active:scale-[0.99] transition"
       >
         {loading ? (
           <>Calcolo in corso...</>
         ) : (
           <>
-            <Calculator size={18} /> Prepara piano automatico
+            <Calculator size={18} /> {location ? "Prepara piano automatico" : "Usa posizione e prepara piano"}
           </>
         )}
       </button>
 
       {!location && (
         <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
-          Attiva la posizione per permettere all'agente di confrontare i negozi vicini.
+          Premi il pulsante: ti chiedero la posizione e poi confrontero i negozi vicini.
         </p>
       )}
 
