@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Calculator,
+  PackageSearch,
   Plus,
+  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -12,12 +14,16 @@ import {
 } from "lucide-react";
 import LocationBar from "@/components/ui/LocationBar";
 import PurchasePlan from "@/components/ui/PurchasePlan";
-import { optimizeQuick, QuickOptimizeResult } from "@/lib/api";
+import { optimizeQuick, Product, QuickOptimizeResult, searchProducts } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
 type AgentItem = {
   query: string;
   quantity: number;
+  product_id?: string;
+  label?: string;
+  image_url?: string | null;
+  brand?: string | null;
 };
 
 const WEEKLY_BASICS = [
@@ -50,19 +56,26 @@ const KEYWORD_ITEMS: Record<string, string[]> = {
   palestra: ["pollo", "riso", "uova", "yogurt greco", "banane"],
 };
 
-function uniqueItems(items: string[]): AgentItem[] {
+function itemKey(item: AgentItem) {
+  return item.product_id || item.query.toLowerCase();
+}
+
+function uniqueItems(items: AgentItem[]): AgentItem[] {
   const seen = new Set<string>();
   return items
-    .map((x) => x.trim())
-    .filter((x) => x.length >= 2)
-    .filter((x) => {
-      const key = x.toLowerCase();
+    .map((item) => ({ ...item, query: item.query.trim(), label: item.label?.trim() || item.query.trim() }))
+    .filter((item) => item.query.length >= 2)
+    .filter((item) => {
+      const key = itemKey(item);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .slice(0, 40)
-    .map((query) => ({ query, quantity: 1 }));
+    .slice(0, 40);
+}
+
+function textItems(items: string[]): AgentItem[] {
+  return uniqueItems(items.map((query) => ({ query, label: query, quantity: 1 })));
 }
 
 function parseRequest(text: string): AgentItem[] {
@@ -72,15 +85,19 @@ function parseRequest(text: string): AgentItem[] {
     .map((x) => x.replace(/^[-*]\s*/, "").trim())
     .filter((x) => x.length >= 2);
 
-  if (explicit.length >= 2) return uniqueItems(explicit);
+  if (explicit.length >= 2) return textItems(explicit);
 
   const matched: string[] = [];
   for (const [keyword, items] of Object.entries(KEYWORD_ITEMS)) {
     if (clean.includes(keyword)) matched.push(...items);
   }
 
-  if (matched.length) return uniqueItems(matched);
-  return uniqueItems(text.split(/\s+e\s+|\s+con\s+|,/));
+  if (matched.length) return textItems(matched);
+  return textItems(text.split(/\s+e\s+|\s+con\s+|,/));
+}
+
+function hasProductPrice(p: Product) {
+  return p.min_price != null && (p.price_store_count ?? 0) > 0;
 }
 
 export default function AgentePage() {
@@ -88,9 +105,34 @@ export default function AgentePage() {
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
   const [items, setItems] = useState<AgentItem[]>(() => parseRequest("spesa per la settimana"));
   const [manualItem, setManualItem] = useState("");
+  const [suggestions, setSuggestions] = useState<Product[]>([]);
+  const [searching, setSearching] = useState(false);
   const [result, setResult] = useState<QuickOptimizeResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const term = manualItem.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const found = await searchProducts(term, location?.lat, location?.lng, radiusKm);
+        setSuggestions(found.slice(0, 8));
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(handle);
+  }, [manualItem, location, radiusKm]);
 
   const estimatedMode = useMemo(() => {
     if (!result?.best_single) return null;
@@ -106,16 +148,33 @@ export default function AgentePage() {
     setError(null);
   };
 
-  const addManualItem = () => {
-    const query = manualItem.trim();
-    if (query.length < 2) return;
-    setItems((prev) => uniqueItems([...prev.map((x) => x.query), query]));
+  const addItem = (item: AgentItem) => {
+    setItems((prev) => uniqueItems([...prev, item]));
     setManualItem("");
+    setSuggestions([]);
     setResult(null);
   };
 
-  const removeItem = (query: string) => {
-    setItems((prev) => prev.filter((x) => x.query !== query));
+  const addManualItem = () => {
+    const query = manualItem.trim();
+    if (query.length < 2) return;
+    addItem({ query, label: query, quantity: 1 });
+  };
+
+  const addProduct = (product: Product) => {
+    if (!hasProductPrice(product)) return;
+    addItem({
+      query: product.name,
+      label: product.name,
+      product_id: product.id,
+      image_url: product.image_url,
+      brand: product.brand,
+      quantity: 1,
+    });
+  };
+
+  const removeItem = (key: string) => {
+    setItems((prev) => prev.filter((x) => itemKey(x) !== key));
     setResult(null);
   };
 
@@ -149,12 +208,19 @@ export default function AgentePage() {
         setLocation(activeLocation);
       }
 
-      const plan = await optimizeQuick(items, activeLocation.lat, activeLocation.lng, radiusKm);
+      const plan = await optimizeQuick(
+        items.map((item) => ({
+          query: item.query,
+          quantity: item.quantity,
+          product_id: item.product_id,
+        })),
+        activeLocation.lat,
+        activeLocation.lng,
+        radiusKm
+      );
       setResult(plan);
     } catch {
-      setError(
-        "Non sono riuscito a preparare il piano. Attiva la posizione e riprova."
-      );
+      setError("Non sono riuscito a preparare il piano. Attiva la posizione e riprova.");
     } finally {
       setLoading(false);
     }
@@ -200,7 +266,9 @@ export default function AgentePage() {
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-sm font-bold text-deep">Lista proposta</p>
-            <p className="text-xs text-stone-400">Puoi modificarla prima di far lavorare l'agente.</p>
+            <p className="text-xs text-stone-400">
+              Scrivi un prodotto e scegli il riferimento reale quando compare.
+            </p>
           </div>
           <span className="text-xs text-stone-500">{items.length} voci</span>
         </div>
@@ -208,14 +276,27 @@ export default function AgentePage() {
         <div className="flex flex-wrap gap-2">
           {items.map((it) => (
             <span
-              key={it.query}
-              className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-surface px-2 py-1 text-sm"
+              key={itemKey(it)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-surface pl-1.5 pr-2 py-1 text-sm max-w-full"
             >
-              {it.query}
+              {it.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={it.image_url}
+                  alt=""
+                  className="w-6 h-6 rounded-full object-contain bg-white border border-stone-100 shrink-0"
+                />
+              ) : (
+                <span className="w-6 h-6 rounded-full bg-stone-100 grid place-items-center text-stone-400 shrink-0">
+                  <PackageSearch size={13} />
+                </span>
+              )}
+              <span className="truncate max-w-[190px]">{it.label || it.query}</span>
+              {it.product_id && <span className="text-[10px] text-primary font-bold">scelto</span>}
               <button
-                onClick={() => removeItem(it.query)}
-                aria-label={`Rimuovi ${it.query}`}
-                className="text-stone-400 hover:text-red-600"
+                onClick={() => removeItem(itemKey(it))}
+                aria-label={`Rimuovi ${it.label || it.query}`}
+                className="text-stone-400 hover:text-red-600 shrink-0"
               >
                 <Trash2 size={13} />
               </button>
@@ -223,21 +304,83 @@ export default function AgentePage() {
           ))}
         </div>
 
-        <div className="flex gap-2">
-          <input
-            value={manualItem}
-            onChange={(e) => setManualItem(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addManualItem()}
-            className="flex-1 border-2 border-stone-200 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
-            placeholder="Aggiungi prodotto"
-          />
-          <button
-            onClick={addManualItem}
-            className="w-11 rounded-xl bg-stone-900 text-white grid place-items-center"
-            aria-label="Aggiungi prodotto"
-          >
-            <Plus size={18} />
-          </button>
+        <div className="relative flex flex-col gap-2">
+          <div className="flex gap-2">
+            <input
+              value={manualItem}
+              onChange={(e) => setManualItem(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addManualItem()}
+              className="flex-1 border-2 border-stone-200 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+              placeholder="Aggiungi prodotto, es. latte"
+            />
+            <button
+              onClick={addManualItem}
+              className="w-11 rounded-xl bg-stone-900 text-white grid place-items-center"
+              aria-label="Aggiungi prodotto"
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+
+          {manualItem.trim().length >= 2 && (searching || suggestions.length > 0) && (
+            <div className="bg-white border border-stone-200 rounded-xl shadow-float overflow-hidden max-h-[56vh] overflow-y-auto">
+              {searching && suggestions.length === 0 && (
+                <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti...</p>
+              )}
+              {suggestions.map((product) => {
+                const hasPrice = hasProductPrice(product);
+                return (
+                  <button
+                    key={product.id}
+                    onClick={() => hasPrice && addProduct(product)}
+                    disabled={!hasPrice}
+                    className={`w-full flex items-center gap-3 px-3 py-2 text-left border-b border-stone-100 last:border-0 ${
+                      hasPrice ? "hover:bg-surface" : "cursor-not-allowed opacity-55"
+                    }`}
+                  >
+                    {product.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={product.image_url}
+                        alt=""
+                        className="w-10 h-10 object-contain rounded bg-white border border-stone-100 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded bg-stone-100 grid place-items-center shrink-0 text-stone-300">
+                        <Search size={16} />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-stone-800 leading-snug line-clamp-2">
+                        {product.name}
+                      </p>
+                      {product.brand && <p className="text-[11px] text-stone-400">{product.brand}</p>}
+                    </div>
+                    {hasPrice ? (
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-semibold text-deep tnum">
+                          da EUR {Number(product.min_price).toFixed(2)}
+                        </p>
+                        <p className="text-[10px] text-stone-400">
+                          {product.price_store_count} negoz{product.price_store_count! > 1 ? "i" : "io"}
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] font-medium text-stone-400 shrink-0">
+                        nessun prezzo
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+              <button
+                onClick={addManualItem}
+                className="w-full px-3 py-2 text-left text-[12px] text-stone-500 hover:bg-surface"
+              >
+                + Usa "{manualItem.trim()}" come ricerca generica
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
