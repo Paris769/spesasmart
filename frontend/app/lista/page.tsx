@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState } from "react";
 import {
   optimizeQuick,
@@ -63,8 +63,13 @@ export default function ListaPage() {
     setResult(null);
   };
 
-  const addProduct = (p: Product) =>
+  const hasProductPrice = (p: Product) =>
+    p.min_price != null && (p.price_store_count ?? 0) > 0;
+
+  const addProduct = (p: Product) => {
+    if (!hasProductPrice(p)) return;
     addItem({ query: p.name, product_id: p.id, label: p.name, image_url: p.image_url });
+  };
 
   const addFreeText = () => {
     const t = text.trim();
@@ -166,11 +171,16 @@ export default function ListaPage() {
             {searching && sug.length === 0 && (
               <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti…</p>
             )}
-            {sug.map((p) => (
+            {sug.map((p) => {
+              const hasPrice = hasProductPrice(p);
+              return (
               <button
                 key={p.id}
-                onClick={() => addProduct(p)}
-                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-surface text-left border-b border-stone-100 last:border-0"
+                onClick={() => hasPrice && addProduct(p)}
+                disabled={!hasPrice}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-left border-b border-stone-100 last:border-0 ${
+                  hasPrice ? "hover:bg-surface" : "cursor-not-allowed opacity-55"
+                }`}
               >
                 {p.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -188,13 +198,18 @@ export default function ListaPage() {
                   <p className="text-sm text-stone-800 leading-snug truncate">{p.name}</p>
                   {p.brand && <p className="text-[11px] text-stone-400">{p.brand}</p>}
                 </div>
-                {p.min_price != null && (
+                {hasPrice ? (
                   <span className="text-sm font-semibold text-deep tnum shrink-0">
                     da €{Number(p.min_price).toFixed(2)}
                   </span>
+                ) : (
+                  <span className="text-[11px] font-medium text-stone-400 shrink-0">
+                    nessun prezzo
+                  </span>
                 )}
               </button>
-            ))}
+              );
+            })}
             <button
               onClick={addFreeText}
               className="w-full px-3 py-2 text-left text-[12px] text-stone-500 hover:bg-surface"

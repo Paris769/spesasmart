@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchProducts, getProductPrices, Product } from "@/lib/api";
@@ -75,6 +75,9 @@ export default function HomePage() {
     setTrailPos(-1);
   };
 
+  const hasProductPrice = (p: Product) =>
+    p.min_price != null && (p.price_store_count ?? 0) > 0;
+
   const canGoBack = trailPos >= 0;
   const canGoForward = trailPos < trail.length - 1;
 
@@ -144,11 +147,18 @@ export default function HomePage() {
             {products.length} prodotti — tocca per vedere i prezzi vicino a te
           </p>
           <ul className="bg-white border border-stone-200 rounded-card shadow-card divide-y divide-stone-100 overflow-y-auto max-h-[62vh]">
-            {products.map((p) => (
+            {products.map((p) => {
+              const hasPrice = hasProductPrice(p);
+              return (
               <li key={p.id}>
                 <button
-                  onClick={() => openProduct(p)}
-                  className="w-full text-left px-4 py-3 hover:bg-surface active:bg-stone-100 flex items-center gap-3 transition"
+                  onClick={() => hasPrice && openProduct(p)}
+                  disabled={!hasPrice}
+                  className={`w-full text-left px-4 py-3 flex items-center gap-3 transition ${
+                    hasPrice
+                      ? "hover:bg-surface active:bg-stone-100"
+                      : "cursor-not-allowed opacity-55"
+                  }`}
                 >
                   {p.image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -166,21 +176,26 @@ export default function HomePage() {
                     <p className="font-medium text-stone-900 text-sm leading-snug">{p.name}</p>
                     {p.brand && <p className="text-xs text-stone-400">{p.brand}</p>}
                   </div>
-                  {p.min_price != null && (
-                    <div className="text-right shrink-0">
-                      <p className="text-sm font-bold text-primary tnum">
-                        €{Number(p.min_price).toFixed(2)}
-                      </p>
-                      {p.price_store_count ? (
-                        <p className="text-[10px] text-stone-400">
-                          {p.price_store_count} negoz{p.price_store_count > 1 ? "i" : "io"}
+                  <div className="text-right shrink-0">
+                    {hasPrice ? (
+                      <>
+                        <p className="text-sm font-bold text-primary tnum">
+                          €{Number(p.min_price).toFixed(2)}
                         </p>
-                      ) : null}
-                    </div>
-                  )}
+                        <p className="text-[10px] text-stone-400">
+                          {p.price_store_count} negoz{p.price_store_count! > 1 ? "i" : "io"}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-[11px] font-medium text-stone-400">
+                        nessun prezzo
+                      </p>
+                    )}
+                  </div>
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}

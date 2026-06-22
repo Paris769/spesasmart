@@ -151,7 +151,9 @@ async def search_products(
                   AND s.is_active  = TRUE
                   {price_geo}
             ) pr ON TRUE
-            WHERE {where} AND (
+            WHERE {where}
+              AND COALESCE(pr.store_count, 0) > 0
+              AND (
                 :q <% p.name                                      -- fuzzy (refusi), GIN-indexed
                 OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
                     @@ plainto_tsquery('simple', :q_tsquery)      -- token esatti
