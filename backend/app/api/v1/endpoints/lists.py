@@ -280,8 +280,11 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             "subtotal": round(float(best_row["price"]) * qty, 2),
             "store_id": best_row["store_id"],
             "chain_name": best_row["chain_name"],
+            "chain_slug": best_row["chain_slug"],
             "store_name": best_row["store_name"],
             "shop_url": best_row["shop_url"],
+            "has_delivery": best_row["has_delivery"],
+            "has_click_collect": best_row["has_click_collect"],
             "product_url": best_row["product_url"],
             "product_name": best_row["product_name"],
         })
@@ -329,7 +332,9 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         sid = b["store_id"]
         ms = multi_by_store.setdefault(sid, {
             "store_id": sid, "store_name": b["store_name"],
-            "chain_name": b["chain_name"], "shop_url": b["shop_url"],
+            "chain_name": b["chain_name"], "chain_slug": b["chain_slug"],
+            "shop_url": b["shop_url"], "has_delivery": b["has_delivery"],
+            "has_click_collect": b["has_click_collect"],
             "subtotal": 0.0, "items": [],
         })
         ms["subtotal"] = round(ms["subtotal"] + b["subtotal"], 2)
@@ -510,3 +515,4 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
     )
     await db.commit()
     return result
+

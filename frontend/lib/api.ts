@@ -185,7 +185,10 @@ export interface QuickOptimizeResult {
       store_id: string;
       store_name: string;
       chain_name: string;
+      chain_slug?: string | null;
       shop_url: string | null;
+      has_delivery?: boolean;
+      has_click_collect?: boolean;
       subtotal: number;
       items: QuickStoreItem[];
     }[];
@@ -261,3 +264,4 @@ export const parseReceipt = (file: File): Promise<ReceiptResult> => {
     })
     .then((r) => r.data);
 };
+
