@@ -3,25 +3,43 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useAppStore, AreaPoint } from "@/lib/store";
 
-// Leaflet va importato dinamicamente (richiede window, no SSR)
 const MapView = dynamic(() => import("@/components/ui/MapView"), { ssr: false });
 
 const RADII = [1, 3, 5, 10, 20, 30, 50];
+const CITY_PRESETS = [
+  { label: "Milano", lat: 45.4642, lng: 9.19 },
+  { label: "Roma", lat: 41.9028, lng: 12.4964 },
+  { label: "Torino", lat: 45.0703, lng: 7.6869 },
+  { label: "Napoli", lat: 40.8518, lng: 14.2681 },
+  { label: "Bologna", lat: 44.4949, lng: 11.3426 },
+];
 
 export default function LocationBar() {
   const { location, radiusKm, searchArea, setLocation, setRadius, setSearchArea } =
     useAppStore();
   const [showMap, setShowMap] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [draftArea, setDraftArea] = useState<AreaPoint[]>([]);
 
+  const chooseCity = (city: (typeof CITY_PRESETS)[number]) => {
+    setLocation({ lat: city.lat, lng: city.lng, label: city.label });
+    setLocationError(null);
+    setShowMap(false);
+  };
+
   const detectLocation = (silent = false) => {
     if (!navigator.geolocation) {
-      if (!silent) alert("Geolocalizzazione non supportata");
+      setLocationError("Il browser non supporta la posizione. Scegli una citta.");
       return;
     }
-    if (!silent) setLocating(true);
+
+    if (!silent) {
+      setLocating(true);
+      setLocationError(null);
+    }
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocation({
@@ -30,17 +48,19 @@ export default function LocationBar() {
           label: "Posizione attuale",
         });
         setLocating(false);
+        setLocationError(null);
       },
       (err) => {
         console.warn("Geolocalizzazione fallita:", err.message);
         setLocating(false);
-        if (!silent) alert("Impossibile rilevare la posizione");
+        if (!silent) {
+          setLocationError("Posizione non disponibile. Scegli una citta qui sotto.");
+        }
       },
       { timeout: 10000, maximumAge: 60000 }
     );
   };
 
-  // Auto-detect al mount (prima visita o posizione auto-rilevata stale).
   useEffect(() => {
     if (!location || location.label === "Posizione attuale") {
       detectLocation(true);
@@ -76,11 +96,7 @@ export default function LocationBar() {
           className="flex items-center gap-1 text-sm bg-primary text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition disabled:opacity-60"
           disabled={locating}
         >
-          📍 {locating
-            ? "Rilevamento…"
-            : location
-            ? location.label
-            : "Usa la mia posizione"}
+          {locating ? "Rilevamento..." : location ? location.label : "Usa la mia posizione"}
         </button>
 
         {location && (
@@ -92,12 +108,11 @@ export default function LocationBar() {
               onClick={() => setShowMap((s) => !s)}
               className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition"
             >
-              {showMap ? "Nascondi mappa" : "🗺 Mostra mappa"}
+              {showMap ? "Nascondi mappa" : "Mostra mappa"}
             </button>
           </>
         )}
 
-        {/* Raggio / area personalizzata */}
         <div className="flex items-center gap-1 ml-auto flex-wrap">
           <span className="text-xs text-gray-600">Raggio:</span>
           {RADII.map((r) => (
@@ -116,7 +131,23 @@ export default function LocationBar() {
         </div>
       </div>
 
-      {/* Barra strumenti area — visibile solo a mappa aperta */}
+      {(!location || locationError) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-sm text-amber-800">
+          <p className="font-medium">{locationError || "Se il browser non trova la posizione, scegli una citta."}</p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {CITY_PRESETS.map((city) => (
+              <button
+                key={city.label}
+                onClick={() => chooseCity(city)}
+                className="px-3 py-1.5 rounded-lg bg-white border border-amber-200 text-amber-900 hover:border-primary transition"
+              >
+                {city.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {showMap && location && (
         <div className="flex flex-wrap items-center gap-2 bg-white border rounded-xl px-3 py-2 shadow-sm">
           {!drawMode && !searchArea && (
@@ -124,26 +155,26 @@ export default function LocationBar() {
               onClick={startDrawing}
               className="text-xs px-3 py-1.5 rounded-lg border border-primary text-primary hover:bg-green-50 transition"
             >
-              ✏️ Disegna area di interesse
+              Disegna area di interesse
             </button>
           )}
 
           {!drawMode && searchArea && (
             <>
               <span className="text-xs bg-green-50 text-green-800 px-2 py-1 rounded-lg">
-                📐 Area personalizzata · {searchArea.length} punti
+                Area personalizzata - {searchArea.length} punti
               </span>
               <button
                 onClick={startDrawing}
                 className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition"
               >
-                ✏️ Ridisegna
+                Ridisegna
               </button>
               <button
                 onClick={() => setSearchArea(null)}
                 className="text-xs px-2 py-1 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition"
               >
-                🗑 Rimuovi area
+                Rimuovi area
               </button>
             </>
           )}
@@ -151,28 +182,27 @@ export default function LocationBar() {
           {drawMode && (
             <>
               <span className="text-xs text-gray-600">
-                ✏️ Tieni premuto e trascina sulla mappa per disegnare l'area
-                {draftArea.length >= 3 && " — area tracciata ✓"}
+                Tieni premuto e trascina sulla mappa per disegnare l'area
+                {draftArea.length >= 3 && " - area tracciata"}
               </span>
               <button
                 onClick={confirmArea}
                 disabled={draftArea.length < 3}
                 className="text-xs px-3 py-1 rounded-lg bg-primary text-white hover:bg-green-700 transition disabled:opacity-40"
               >
-                ✓ Conferma area
+                Conferma area
               </button>
               <button
                 onClick={cancelDrawing}
                 className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-primary transition"
               >
-                ✗ Esci
+                Esci
               </button>
             </>
           )}
         </div>
       )}
 
-      {/* Mappa — compare al click su "Posizione attuale" o "Mostra mappa" */}
       {showMap && location && (
         <div
           className={`rounded-xl overflow-hidden border shadow ${
