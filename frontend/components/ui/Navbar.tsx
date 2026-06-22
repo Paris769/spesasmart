@@ -2,11 +2,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
-import { Search, ListChecks, MapPin, ScanLine } from "lucide-react";
+import { Bot, MapPin, ScanLine, Search } from "lucide-react";
 
 const links = [
   { href: "/", label: "Cerca", Icon: Search },
-  { href: "/lista", label: "Lista", Icon: ListChecks },
+  { href: "/agente", label: "Agente", Icon: Bot },
   { href: "/mappa", label: "Mappa", Icon: MapPin },
   { href: "/scanner", label: "Scanner", Icon: ScanLine },
 ];
@@ -49,3 +49,4 @@ export default function BottomNav() {
     </nav>
   );
 }
+
