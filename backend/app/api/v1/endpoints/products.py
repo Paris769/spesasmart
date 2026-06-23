@@ -27,7 +27,7 @@ def _word_regex(q: str) -> str:
     parts: list[str] = []
     for tok in tokens:
         if tok == "caffe":
-            parts.append(r"caff[eè]")
+            parts.append(r"caff.")
         else:
             parts.append(re.escape(tok))
     return r"(^|[^[:alnum:]_])" + r"[[:space:][:punct:]]+".join(parts) + r"([^[:alnum:]_]|$)"
@@ -62,6 +62,28 @@ def _irrelevant_regex(q: str) -> str:
 
 def _has_irrelevant_terms(q: str) -> bool:
     return _irrelevant_regex(q) != r"$^"
+
+
+def _required_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if len(tokens) != 1:
+        return r"$^"
+    required = {
+        "caffe": [
+            r"arabica", r"grani", r"macinat[[:alnum:]_]*", r"solubil[[:alnum:]_]*",
+            r"espresso", r"ciald[[:alnum:]_]*", r"capsul[[:alnum:]_]*", r"classico",
+            r"classic", r"filtro", r"tradition", r"deka", r"decaffeinat[[:alnum:]_]*",
+            r"americano", r"coffee",
+        ],
+    }
+    parts = required.get(tokens[0], [])
+    if not parts:
+        return r"$^"
+    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")([^[:alnum:]_]|$)"
+
+
+def _has_required_terms(q: str) -> bool:
+    return _required_regex(q) != r"$^"
 
 
 def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
@@ -139,6 +161,8 @@ async def search_products(
         "q_word_re": _word_regex(q),
         "irrelevant_re": _irrelevant_regex(q),
         "has_irrelevant": _has_irrelevant_terms(q),
+        "required_re": _required_regex(q),
+        "has_required": _has_required_terms(q),
         "allow_fuzzy": not strict_match,
         "limit": limit,
         "offset": offset,
@@ -216,6 +240,7 @@ async def search_products(
             WHERE {where}
               AND COALESCE(pr.store_count, 0) > 0
               AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
+              AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '')) !~ :required_re)
               AND (
                 lower(p.name) ~ :q_word_re                       -- parola/frase intera
                 OR lower(COALESCE(p.brand, '')) ~ :q_word_re
