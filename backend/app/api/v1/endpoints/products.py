@@ -163,7 +163,7 @@ async def search_products(
         "has_irrelevant": _has_irrelevant_terms(q),
         "required_re": _required_regex(q),
         "has_required": _has_required_terms(q),
-        "allow_fuzzy": not strict_match,
+        "allow_fuzzy": (not strict_match) and len(q_tokens) == 1,
         "limit": limit,
         "offset": offset,
     }
@@ -213,15 +213,17 @@ async def search_products(
         text(f"""
             SELECT p.*,
                    CASE
-                       WHEN lower(p.name) = :q_lower                THEN 6
-                       WHEN lower(p.name) ~ :q_word_re              THEN 5
-                       WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 4
+                       WHEN lower(p.name) = :q_lower                THEN 8
+                       WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                            @@ plainto_tsquery('simple', :q_tsquery) THEN 7
+                       WHEN lower(p.name) ~ :q_word_re              THEN 6
+                       WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 5
                        WHEN lower(p.name) LIKE :q_lower_start       THEN 3
                        ELSE 1
                    END AS word_rank,
                    word_similarity(:q, p.name) AS fuzzy_score,
                    ts_rank(
-                       to_tsvector('simple', lower(p.name)),
+                       to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, ''))),
                        plainto_tsquery('simple', :q_tsquery)
                    ) AS ts_score,
                    pr.min_price,
@@ -240,11 +242,11 @@ async def search_products(
             WHERE {where}
               AND COALESCE(pr.store_count, 0) > 0
               AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
-              AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '')) !~ :required_re)
+              AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
               AND (
                 lower(p.name) ~ :q_word_re                       -- parola/frase intera
                 OR lower(COALESCE(p.brand, '')) ~ :q_word_re
-                OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
+                OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
                     @@ plainto_tsquery('simple', :q_tsquery)      -- token esatti
                 OR (:allow_fuzzy AND :q <% p.name)                 -- refusi solo su query meno ambigue
             )

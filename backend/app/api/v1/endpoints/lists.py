@@ -229,11 +229,11 @@ _QUICK_ITEM_SQL = text("""
       AND (
             lower(p.name) ~ :q_word_re
             OR lower(COALESCE(p.brand, '')) ~ :q_word_re
-            OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
+            OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
                 @@ plainto_tsquery('simple', :q_tsquery)
           )
       AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
-      AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '')) !~ :required_re)
+      AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
       AND (
             s.external_id LIKE '%-online'
             OR ST_DWithin(
@@ -247,9 +247,11 @@ _QUICK_ITEM_SQL = text("""
     -- che "latte" peschi "panino al latte" solo perche' costa meno.
     ORDER BY s.id,
              CASE
-                 WHEN lower(p.name) = :q_lower              THEN 6
-                 WHEN lower(p.name) ~ :q_word_re            THEN 5
-                 WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 4
+                 WHEN lower(p.name) = :q_lower              THEN 8
+                 WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                      @@ plainto_tsquery('simple', :q_tsquery) THEN 7
+                 WHEN lower(p.name) ~ :q_word_re            THEN 6
+                 WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 5
                  WHEN lower(p.name) LIKE :q_start           THEN 3
                  ELSE 1
              END DESC,
