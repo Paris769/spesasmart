@@ -171,11 +171,25 @@ async def run_famila(
         _ = discover_only  # discovery sempre eseguita finché il price-scrape è off
 
 
-async def prepare_connection() -> asyncpg.Connection:
-    conn = await asyncpg.connect(DB_URL)
-    await ensure_schema(conn)
-    await ensure_chains(conn)
-    return conn
+async def prepare_connection(max_attempts: int = 3) -> asyncpg.Connection:
+    for attempt in range(max_attempts):
+        conn = await asyncpg.connect(DB_URL)
+        try:
+            await ensure_schema(conn)
+            await ensure_chains(conn)
+            return conn
+        except asyncpg.exceptions.ReadOnlySQLTransactionError:
+            await conn.close()
+            if attempt == max_attempts - 1:
+                raise
+            logging.warning(
+                "Connessione DB iniziale in sola lettura: ritento (%d/%d)",
+                attempt + 1,
+                max_attempts,
+            )
+            await asyncio.sleep(2 * (attempt + 1))
+
+    raise RuntimeError("Connessione DB non disponibile")
 
 
 async def run_chain(conn: asyncpg.Connection, chain: str, args: argparse.Namespace) -> None:
