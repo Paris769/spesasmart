@@ -42,11 +42,13 @@ def _irrelevant_regex(q: str) -> str:
         return r"$^"
     exclusions = {
         "caffe": [
-            r"caffeina", r"yogurt", r"kefir", r"gelat", r"cono", r"coppa", r"coppe", r"coppette",
+            r"caffeina", r"yogurt", r"kefir", r"gelat[[:alnum:]_]*", r"cono", r"coppa", r"coppe", r"coppette",
             r"crema fredda", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
             r"tazzina", r"bicchier", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
             r"affogato", r"fruyo", r"grisb", r"zero grassi", r"vasetto", r"mousse", r"cookies",
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
+            r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
+            r"senza peccato", r"crema di",
         ],
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
