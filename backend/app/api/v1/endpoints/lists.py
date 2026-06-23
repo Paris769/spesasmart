@@ -44,7 +44,7 @@ def _irrelevant_regex(q: str) -> str:
         "caffe": [
             r"caffeina", r"yogurt", r"kefir", r"gelat[[:alnum:]_]*", r"cono", r"coppa", r"coppe", r"coppette",
             r"crema fredda", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
-            r"tazzina", r"bicchier", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
+            r"tazzin[[:alnum:]_]*", r"bicchier[[:alnum:]_]*", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
             r"affogato", r"fruyo", r"grisb.*", r"zero grassi", r"vasetto", r"mousse", r"cookies",
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
             r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
