@@ -171,14 +171,53 @@ async def run_famila(
         _ = discover_only  # discovery sempre eseguita finché il price-scrape è off
 
 
+async def prepare_connection() -> asyncpg.Connection:
+    conn = await asyncpg.connect(DB_URL)
+    await ensure_schema(conn)
+    await ensure_chains(conn)
+    return conn
+
+
+async def run_chain(conn: asyncpg.Connection, chain: str, args: argparse.Namespace) -> None:
+    if chain == "esselunga":
+        await run_esselunga(conn, args.dry_run, args.discover_only)
+    elif chain == "conad":
+        await run_conad(conn, args.dry_run)
+    elif chain == "carrefour":
+        await run_carrefour(conn, args.dry_run)
+    elif chain == "eurospin":
+        await run_eurospin(conn, args.dry_run, args.discover_only)
+    elif chain == "iper":
+        await run_iper(conn, args.dry_run, args.discover_only)
+    elif chain == "famila":
+        await run_famila(conn, args.dry_run, args.discover_only)
+    elif chain == "cosicomodo":
+        # Scrapa solo i prezzi CosiComodo (senza ri-discovery negozi Famila)
+        async with httpx.AsyncClient() as client:
+            spider = CosiComodoSpider(client, conn, dry_run=args.dry_run)
+            await spider.scrape_prices()
+    elif chain == "images":
+        # Arricchimento immagini mancanti da Open Food Facts
+        await enrich_images(conn, dry_run=args.dry_run)
+    elif chain == "dedup":
+        # Unisce i prodotti duplicati tra catene (--dry-run = anteprima)
+        await dedup(conn, apply=not args.dry_run)
+    elif chain == "prune":
+        # Retention: elimina lo storico prezzi vecchio (vedi prune.py)
+        if args.dry_run:
+            logging.info("[DRY] prune saltato")
+        else:
+            await prune_prices(conn)
+    else:
+        logging.warning("Chain '%s' non ancora implementata", chain)
+
+
 async def main(args: argparse.Namespace) -> None:
     if not DB_URL:
         sys.exit("Errore: DATABASE_URL non impostata")
 
-    conn = await asyncpg.connect(DB_URL)
+    conn = await prepare_connection()
     try:
-        await ensure_schema(conn)
-        await ensure_chains(conn)
         chains = (
             [args.chain]
             if args.chain != "all"
@@ -192,37 +231,19 @@ async def main(args: argparse.Namespace) -> None:
         )
 
         for chain in chains:
-            if chain == "esselunga":
-                await run_esselunga(conn, args.dry_run, args.discover_only)
-            elif chain == "conad":
-                await run_conad(conn, args.dry_run)
-            elif chain == "carrefour":
-                await run_carrefour(conn, args.dry_run)
-            elif chain == "eurospin":
-                await run_eurospin(conn, args.dry_run, args.discover_only)
-            elif chain == "iper":
-                await run_iper(conn, args.dry_run, args.discover_only)
-            elif chain == "famila":
-                await run_famila(conn, args.dry_run, args.discover_only)
-            elif chain == "cosicomodo":
-                # Scrapa solo i prezzi CosìComodo (senza ri-discovery negozi Famila)
-                async with httpx.AsyncClient() as client:
-                    spider = CosiComodoSpider(client, conn, dry_run=args.dry_run)
-                    await spider.scrape_prices()
-            elif chain == "images":
-                # Arricchimento immagini mancanti da Open Food Facts
-                await enrich_images(conn, dry_run=args.dry_run)
-            elif chain == "dedup":
-                # Unisce i prodotti duplicati tra catene (--dry-run = anteprima)
-                await dedup(conn, apply=not args.dry_run)
-            elif chain == "prune":
-                # Retention: elimina lo storico prezzi vecchio (vedi prune.py)
-                if args.dry_run:
-                    logging.info("[DRY] prune saltato")
-                else:
-                    await prune_prices(conn)
-            else:
-                logging.warning("Chain '%s' non ancora implementata", chain)
+            for attempt in range(2):
+                try:
+                    await run_chain(conn, chain, args)
+                    break
+                except asyncpg.exceptions.ReadOnlySQLTransactionError:
+                    if attempt == 1:
+                        raise
+                    logging.warning(
+                        "Connessione DB in sola lettura durante '%s': riapro e ritento una volta",
+                        chain,
+                    )
+                    await conn.close()
+                    conn = await prepare_connection()
     finally:
         await conn.close()
 
