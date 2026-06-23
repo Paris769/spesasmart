@@ -42,9 +42,11 @@ def _irrelevant_regex(q: str) -> str:
         return r"$^"
     exclusions = {
         "caffe": [
-            r"caffeina", r"yogurt", r"kefir", r"gelat", r"cono", r"coppa",
-            r"crema", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
+            r"caffeina", r"yogurt", r"kefir", r"gelat", r"cono", r"coppa", r"coppe", r"coppette",
+            r"crema fredda", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
             r"tazzina", r"bicchier", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
+            r"affogato", r"fruyo", r"grisb", r"zero grassi", r"vasetto", r"mousse", r"cookies",
+            r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
         ],
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
@@ -55,7 +57,7 @@ def _irrelevant_regex(q: str) -> str:
     parts = exclusions.get(tokens[0], [])
     if not parts:
         return r"$^"
-    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")"
+    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")([^[:alnum:]_]|$)"
 
 
 def _has_irrelevant_terms(q: str) -> bool:
