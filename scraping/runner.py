@@ -49,6 +49,8 @@ _CHAINS_SEED = [
     ("Eurospin",  "eurospin",  False, None,                                                      "none"),
     ("Pam",       "pam",       True,  "https://www.pampanorama.it/spesa-online",                "redirect"),
     ("MD",        "md",        False, None,                                                      "none"),
+    ("Aldi",      "aldi",      False, None,                                                      "none"),
+    ("Penny",     "penny",     False, None,                                                      "none"),
     ("Iper",      "iper",      False, None,                                                      "none"),
     ("Famila",    "famila",    True,  "https://www.cosicomodo.it/famila",                       "api"),
     ("Il Gigante", "ilgigante", True, "https://www.cosicomodo.it/ilgigante",                    "api"),
@@ -229,7 +231,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "eurospin", "iper", "famila", "cosicomodo", "images", "dedup", "prune", "all"],
+        choices=["esselunga", "conad", "carrefour", "coop", "lidl", "eurospin", "aldi", "md", "penny", "iper", "famila", "cosicomodo", "images", "dedup", "prune", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )

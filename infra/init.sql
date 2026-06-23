@@ -200,6 +200,8 @@ INSERT INTO chains (name, slug, logo_url, has_online_shop, shop_url, integration
 ('Eurospin',    'eurospin',   NULL, FALSE, NULL,                                                      'none'),
 ('Pam',         'pam',        NULL, TRUE,  'https://www.pampanorama.it/spesa-online',                'redirect'),
 ('MD',          'md',         NULL, FALSE, NULL,                                                      'none'),
+('Aldi',        'aldi',       NULL, FALSE, NULL,                                                      'none'),
+('Penny',       'penny',      NULL, FALSE, NULL,                                                      'none'),
 ('Iper',        'iper',       NULL, FALSE, NULL,                                                      'none'),
 ('Famila',      'famila',     NULL, FALSE, NULL,                                                      'none');
 
