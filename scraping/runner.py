@@ -171,7 +171,7 @@ async def run_famila(
         _ = discover_only  # discovery sempre eseguita finché il price-scrape è off
 
 
-async def prepare_connection(max_attempts: int = 3) -> asyncpg.Connection:
+async def prepare_connection(max_attempts: int = 10) -> asyncpg.Connection:
     for attempt in range(max_attempts):
         conn = await asyncpg.connect(DB_URL)
         try:
@@ -187,7 +187,7 @@ async def prepare_connection(max_attempts: int = 3) -> asyncpg.Connection:
                 attempt + 1,
                 max_attempts,
             )
-            await asyncio.sleep(2 * (attempt + 1))
+            await asyncio.sleep(min(30, 5 * (attempt + 1)))
 
     raise RuntimeError("Connessione DB non disponibile")
 
