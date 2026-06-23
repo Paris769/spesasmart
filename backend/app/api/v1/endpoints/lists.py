@@ -1,4 +1,6 @@
 import json
+import re
+import unicodedata
 from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +10,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 
 router = APIRouter(prefix="/lists", tags=["lists"])
+
+
+def _strip_accents(value: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", value) if not unicodedata.combining(ch)
+    )
+
+
+def _search_tokens(q: str) -> list[str]:
+    normalized = _strip_accents(q.lower())
+    return [tok for tok in re.findall(r"[a-z0-9]+", normalized) if len(tok) >= 2]
+
+
+def _word_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if not tokens:
+        return r"$^"
+    parts: list[str] = []
+    for tok in tokens:
+        if tok == "caffe":
+            parts.append(r"caff[eè]")
+        else:
+            parts.append(re.escape(tok))
+    return r"(^|[^[:alnum:]_])" + r"[[:space:][:punct:]]+".join(parts) + r"([^[:alnum:]_]|$)"
 
 
 # ── Schemi ──────────────────────────────────────────────────────────────────
@@ -148,9 +174,10 @@ _QUICK_ITEM_SQL = text("""
     JOIN chains c  ON s.chain_id = c.id
     WHERE pr.price > 0                       -- scarta prezzi nulli/invalidi
       AND (
-            to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
-                @@ plainto_tsquery('simple', :q)
-            OR p.name ILIKE :qlike
+            lower(p.name) ~ :q_word_re
+            OR lower(COALESCE(p.brand, '')) ~ :q_word_re
+            OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
+                @@ plainto_tsquery('simple', :q_tsquery)
           )
       AND (
             s.external_id LIKE '%-online'
@@ -165,10 +192,10 @@ _QUICK_ITEM_SQL = text("""
     -- che "latte" peschi "panino al latte" solo perche' costa meno.
     ORDER BY s.id,
              CASE
-                 WHEN lower(p.name) = :q_lower              THEN 4
+                 WHEN lower(p.name) = :q_lower              THEN 6
+                 WHEN lower(p.name) ~ :q_word_re            THEN 5
+                 WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 4
                  WHEN lower(p.name) LIKE :q_start           THEN 3
-                 WHEN lower(p.name) LIKE :q_mid
-                   OR lower(p.name) LIKE :q_end             THEN 2
                  ELSE 1
              END DESC,
              pr.price ASC
@@ -261,7 +288,9 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         if not rows:
             ql = q.lower()
             rows = (await db.execute(_QUICK_ITEM_SQL, {
-                "q": q, "qlike": f"%{q}%",
+                "q": q,
+                "q_tsquery": " ".join(_search_tokens(q)) or ql,
+                "q_word_re": _word_regex(q),
                 "q_lower": ql, "q_start": f"{ql} %",
                 "q_mid": f"% {ql} %", "q_end": f"% {ql}",
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m,

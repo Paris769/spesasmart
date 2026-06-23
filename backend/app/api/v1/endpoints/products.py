@@ -1,3 +1,5 @@
+import re
+import unicodedata
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from sqlalchemy import text
@@ -5,6 +7,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+def _strip_accents(value: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", value) if not unicodedata.combining(ch)
+    )
+
+
+def _search_tokens(q: str) -> list[str]:
+    normalized = _strip_accents(q.lower())
+    return [tok for tok in re.findall(r"[a-z0-9]+", normalized) if len(tok) >= 2]
+
+
+def _word_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if not tokens:
+        return r"$^"
+    parts: list[str] = []
+    for tok in tokens:
+        if tok == "caffe":
+            parts.append(r"caff[eè]")
+        else:
+            parts.append(re.escape(tok))
+    return r"(^|[^[:alnum:]_])" + r"[[:space:][:punct:]]+".join(parts) + r"([^[:alnum:]_]|$)"
 
 
 def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
@@ -68,6 +94,8 @@ async def search_products(
         raise HTTPException(status_code=400, detail="Fornire q o barcode")
 
     q_lower = q.lower()
+    q_tokens = _search_tokens(q)
+    strict_match = len(q_tokens) <= 1 and len(q_tokens[0]) <= 5 if q_tokens else True
     filters = ["TRUE"]
     params: dict = {
         "q": q,
@@ -76,7 +104,9 @@ async def search_products(
         "q_lower_start": q_lower + " %",
         "q_lower_mid": "% " + q_lower + " %",
         "q_lower_end": "% " + q_lower,
-        "q_tsquery": q_lower,
+        "q_tsquery": " ".join(q_tokens) or q_lower,
+        "q_word_re": _word_regex(q),
+        "allow_fuzzy": not strict_match,
         "limit": limit,
         "offset": offset,
     }
@@ -117,20 +147,19 @@ async def search_products(
 
     where = " AND ".join(filters)
 
-    # Ricerca FUZZY tollerante ai refusi (pg_trgm word_similarity): "gilette"
-    # trova "Gillette", "mach3" trova "Mach 3". La soglia bassa (0.3) massimizza
-    # il recall; l'operatore <% usa l'indice GIN gin_trgm_ops. SET LOCAL vale
-    # solo per questa transazione/connessione.
-    await db.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.3"))
+    # Ricerca fuzzy solo quando la query e abbastanza lunga. Per query brevi
+    # o merceologiche (es. caffe) privilegiamo parole intere per evitare falsi
+    # positivi come 'caffeina'.
+    await db.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.45"))
 
     result = await db.execute(
         text(f"""
             SELECT p.*,
                    CASE
-                       WHEN lower(p.name) = :q_lower                THEN 4
+                       WHEN lower(p.name) = :q_lower                THEN 6
+                       WHEN lower(p.name) ~ :q_word_re              THEN 5
+                       WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 4
                        WHEN lower(p.name) LIKE :q_lower_start       THEN 3
-                       WHEN lower(p.name) LIKE :q_lower_mid
-                         OR lower(p.name) LIKE :q_lower_end         THEN 2
                        ELSE 1
                    END AS word_rank,
                    word_similarity(:q, p.name) AS fuzzy_score,
@@ -154,11 +183,11 @@ async def search_products(
             WHERE {where}
               AND COALESCE(pr.store_count, 0) > 0
               AND (
-                :q <% p.name                                      -- fuzzy (refusi), GIN-indexed
+                lower(p.name) ~ :q_word_re                       -- parola/frase intera
+                OR lower(COALESCE(p.brand, '')) ~ :q_word_re
                 OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
                     @@ plainto_tsquery('simple', :q_tsquery)      -- token esatti
-                OR p.name ILIKE :q_like                           -- sottostringa
-                OR p.brand ILIKE :q_like
+                OR (:allow_fuzzy AND :q <% p.name)                 -- refusi solo su query meno ambigue
             )
             ORDER BY
                 word_rank DESC,
