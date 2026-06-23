@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Calculator,
+  Info,
   PackageSearch,
   Plus,
   Search,
@@ -241,6 +242,15 @@ export default function AgentePage() {
           </p>
         </div>
       </header>
+
+      <div className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 flex gap-2 text-xs text-amber-900">
+        <Info size={16} className="mt-0.5 shrink-0" />
+        <p>
+          SpesaSmart confronta le catene con dati disponibili: Carrefour, Conad,
+          Esselunga, Famila, Il Gigante e Iper. Alcuni prezzi, negozi o offerte
+          possono non comparire per zona, prodotto o aggiornamento dati.
+        </p>
+      </div>
 
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
         <label className="text-sm font-semibold text-deep" htmlFor="agent-prompt">
