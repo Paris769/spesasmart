@@ -36,6 +36,32 @@ def _word_regex(q: str) -> str:
     return r"(^|[^[:alnum:]_])" + r"[[:space:][:punct:]]+".join(parts) + r"([^[:alnum:]_]|$)"
 
 
+def _irrelevant_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if len(tokens) != 1:
+        return r"$^"
+    exclusions = {
+        "caffe": [
+            r"caffeina", r"yogurt", r"kefir", r"gelat", r"cono", r"coppa",
+            r"crema", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
+            r"tazzina", r"bicchier", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
+        ],
+        "latte": [
+            r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
+            r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato",
+        ],
+        "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
+    }
+    parts = exclusions.get(tokens[0], [])
+    if not parts:
+        return r"$^"
+    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")"
+
+
+def _has_irrelevant_terms(q: str) -> bool:
+    return _irrelevant_regex(q) != r"$^"
+
+
 # ── Schemi ──────────────────────────────────────────────────────────────────
 
 class ListCreate(BaseModel):
@@ -179,6 +205,7 @@ _QUICK_ITEM_SQL = text("""
             OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
                 @@ plainto_tsquery('simple', :q_tsquery)
           )
+      AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
       AND (
             s.external_id LIKE '%-online'
             OR ST_DWithin(
@@ -291,6 +318,8 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "q": q,
                 "q_tsquery": " ".join(_search_tokens(q)) or ql,
                 "q_word_re": _word_regex(q),
+                "irrelevant_re": _irrelevant_regex(q),
+                "has_irrelevant": _has_irrelevant_terms(q),
                 "q_lower": ql, "q_start": f"{ql} %",
                 "q_mid": f"% {ql} %", "q_end": f"% {ql}",
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m,

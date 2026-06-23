@@ -33,6 +33,32 @@ def _word_regex(q: str) -> str:
     return r"(^|[^[:alnum:]_])" + r"[[:space:][:punct:]]+".join(parts) + r"([^[:alnum:]_]|$)"
 
 
+def _irrelevant_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if len(tokens) != 1:
+        return r"$^"
+    exclusions = {
+        "caffe": [
+            r"caffeina", r"yogurt", r"kefir", r"gelat", r"cono", r"coppa",
+            r"crema", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
+            r"tazzina", r"bicchier", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
+        ],
+        "latte": [
+            r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
+            r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato",
+        ],
+        "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
+    }
+    parts = exclusions.get(tokens[0], [])
+    if not parts:
+        return r"$^"
+    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")"
+
+
+def _has_irrelevant_terms(q: str) -> bool:
+    return _irrelevant_regex(q) != r"$^"
+
+
 def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
     """
     Converte un'area "lat,lng;lat,lng;…" (poligono disegnato sulla mappa)
@@ -106,6 +132,8 @@ async def search_products(
         "q_lower_end": "% " + q_lower,
         "q_tsquery": " ".join(q_tokens) or q_lower,
         "q_word_re": _word_regex(q),
+        "irrelevant_re": _irrelevant_regex(q),
+        "has_irrelevant": _has_irrelevant_terms(q),
         "allow_fuzzy": not strict_match,
         "limit": limit,
         "offset": offset,
@@ -182,6 +210,7 @@ async def search_products(
             ) pr ON TRUE
             WHERE {where}
               AND COALESCE(pr.store_count, 0) > 0
+              AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
               AND (
                 lower(p.name) ~ :q_word_re                       -- parola/frase intera
                 OR lower(COALESCE(p.brand, '')) ~ :q_word_re
