@@ -45,10 +45,11 @@ def _irrelevant_regex(q: str) -> str:
             r"caffeina", r"yogurt", r"kefir", r"gelat[[:alnum:]_]*", r"cono", r"coppa", r"coppe", r"coppette",
             r"crema fredda", r"macchina", r"macchine", r"decalcificante", r"disincrostante",
             r"tazzina", r"bicchier", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
-            r"affogato", r"fruyo", r"grisb", r"zero grassi", r"vasetto", r"mousse", r"cookies",
+            r"affogato", r"fruyo", r"grisb.*", r"zero grassi", r"vasetto", r"mousse", r"cookies",
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
             r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
-            r"senza peccato", r"crema di",
+            r"senza peccato", r"crema di", r"zuppalatte", r"colussi", r"cereali", r"orzo",
+            r"biscott[[:alnum:]_]*",
         ],
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
