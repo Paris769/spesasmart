@@ -178,12 +178,12 @@ async def prepare_connection(max_attempts: int = 3) -> asyncpg.Connection:
             await ensure_schema(conn)
             await ensure_chains(conn)
             return conn
-        except asyncpg.exceptions.ReadOnlySQLTransactionError:
+        except (asyncpg.exceptions.CannotConnectNowError, asyncpg.exceptions.ReadOnlySQLTransactionError):
             await conn.close()
             if attempt == max_attempts - 1:
                 raise
             logging.warning(
-                "Connessione DB iniziale in sola lettura: ritento (%d/%d)",
+                "Connessione DB iniziale non scrivibile o non pronta: ritento (%d/%d)",
                 attempt + 1,
                 max_attempts,
             )
@@ -249,7 +249,7 @@ async def main(args: argparse.Namespace) -> None:
                 try:
                     await run_chain(conn, chain, args)
                     break
-                except asyncpg.exceptions.ReadOnlySQLTransactionError:
+                except (asyncpg.exceptions.CannotConnectNowError, asyncpg.exceptions.ReadOnlySQLTransactionError):
                     if attempt == 1:
                         raise
                     logging.warning(
