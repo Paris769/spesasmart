@@ -14,7 +14,6 @@ def _strip_accents(value: str) -> str:
         ch for ch in unicodedata.normalize("NFKD", value) if not unicodedata.combining(ch)
     )
 
-
 def _search_tokens(q: str) -> list[str]:
     normalized = _strip_accents(q.lower())
     return [tok for tok in re.findall(r"[a-z0-9]+", normalized) if len(tok) >= 2]
@@ -46,13 +45,15 @@ def _irrelevant_regex(q: str) -> str:
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
             r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
             r"senza peccato", r"crema di", r"zuppalatte", r"colussi", r"cereali", r"orzo",
-            r"biscott[[:alnum:]_]*",
+            r"biscott[[:alnum:]_]*", r"liquore", r"estratto", r"cacao", r"amaro",
         ],
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato",
         ],
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
+        "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
+        "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*"],
     }
     parts = exclusions.get(tokens[0], [])
     if not parts:
@@ -165,6 +166,7 @@ async def search_products(
         "has_required": _has_required_terms(q),
         "allow_fuzzy": (not strict_match) and len(q_tokens) == 1,
         "limit": limit,
+        "candidate_limit": max(500, min(2000, limit * 50)),
         "offset": offset,
     }
 
@@ -206,55 +208,68 @@ async def search_products(
 
     # Ricerca fuzzy solo quando la query e abbastanza lunga. Per query brevi
     # o merceologiche (es. caffe) privilegiamo parole intere per evitare falsi
-    # positivi come 'caffeina'.
+    # positivi come 'caffeina'. Prima selezioniamo candidati testuali, poi
+    # calcoliamo prezzi solo su quel set: query comuni come "latte" restano rapide.
     await db.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.45"))
 
     result = await db.execute(
         text(f"""
-            SELECT p.*,
-                   CASE
-                       WHEN lower(p.name) = :q_lower                THEN 8
-                       WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
-                            @@ plainto_tsquery('simple', :q_tsquery) THEN 7
-                       WHEN lower(p.name) ~ :q_word_re              THEN 6
-                       WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 5
-                       WHEN lower(p.name) LIKE :q_lower_start       THEN 3
-                       ELSE 1
-                   END AS word_rank,
-                   word_similarity(:q, p.name) AS fuzzy_score,
-                   ts_rank(
-                       to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, ''))),
-                       plainto_tsquery('simple', :q_tsquery)
-                   ) AS ts_score,
+            WITH candidates AS MATERIALIZED (
+                SELECT p.*,
+                       CASE
+                           WHEN lower(p.name) = :q_lower THEN 10
+                           WHEN lower(p.name) LIKE :q_lower_start THEN 9
+                           WHEN lower(p.name) ~ :q_word_re THEN 8
+                           WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 7
+                           WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                                @@ plainto_tsquery('simple', :q_tsquery) THEN 6
+                           ELSE 1
+                       END AS word_rank,
+                       word_similarity(:q, p.name) AS fuzzy_score,
+                       ts_rank(
+                           to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, ''))),
+                           plainto_tsquery('simple', :q_tsquery)
+                       ) AS ts_score
+                FROM products p
+                WHERE {where}
+                  AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
+                  AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
+                  AND (
+                    lower(p.name) ~ :q_word_re
+                    OR lower(COALESCE(p.brand, '')) ~ :q_word_re
+                    OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                        @@ plainto_tsquery('simple', :q_tsquery)
+                    OR (:allow_fuzzy AND :q <% p.name)
+                  )
+                ORDER BY
+                    word_rank DESC,
+                    fuzzy_score DESC,
+                    ts_score DESC,
+                    similarity(p.name, :q) DESC,
+                    p.updated_at DESC NULLS LAST
+                LIMIT :candidate_limit
+            )
+            SELECT c.*,
                    pr.min_price,
                    pr.store_count AS price_store_count
-            FROM products p
-            LEFT JOIN LATERAL (
-                SELECT MIN(x.price)            AS min_price,
+            FROM candidates c
+            JOIN LATERAL (
+                SELECT MIN(x.price) AS min_price,
                        COUNT(DISTINCT x.store_id) AS store_count
                 FROM prices x
                 JOIN stores s ON x.store_id = s.id
-                WHERE x.product_id = p.id
+                WHERE x.product_id = c.id
                   AND x.is_current = TRUE
-                  AND s.is_active  = TRUE
+                  AND s.is_active = TRUE
                   {price_geo}
             ) pr ON TRUE
-            WHERE {where}
-              AND COALESCE(pr.store_count, 0) > 0
-              AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
-              AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
-              AND (
-                lower(p.name) ~ :q_word_re                       -- parola/frase intera
-                OR lower(COALESCE(p.brand, '')) ~ :q_word_re
-                OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
-                    @@ plainto_tsquery('simple', :q_tsquery)      -- token esatti
-                OR (:allow_fuzzy AND :q <% p.name)                 -- refusi solo su query meno ambigue
-            )
+            WHERE COALESCE(pr.store_count, 0) > 0
             ORDER BY
-                word_rank DESC,
-                fuzzy_score DESC,
-                ts_score   DESC,
-                similarity(p.name, :q) DESC
+                c.word_rank DESC,
+                c.fuzzy_score DESC,
+                c.ts_score DESC,
+                pr.store_count DESC,
+                similarity(c.name, :q) DESC
             LIMIT :limit OFFSET :offset
         """),
         params,
@@ -278,7 +293,6 @@ async def search_products(
         pass
 
     return rows
-
 
 @router.get("/{product_id}/prices")
 async def get_product_prices(

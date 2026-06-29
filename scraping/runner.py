@@ -101,6 +101,13 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_product_aliases_product "
         "ON product_aliases(product_id)"
     )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prices_source ON prices(source)"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prices_current_product_store "
+        "ON prices(product_id, store_id) WHERE is_current = TRUE"
+    )
 
 
 async def run_esselunga(conn: asyncpg.Connection, dry_run: bool, discover_only: bool) -> None:

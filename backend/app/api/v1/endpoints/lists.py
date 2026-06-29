@@ -17,7 +17,6 @@ def _strip_accents(value: str) -> str:
         ch for ch in unicodedata.normalize("NFKD", value) if not unicodedata.combining(ch)
     )
 
-
 def _search_tokens(q: str) -> list[str]:
     normalized = _strip_accents(q.lower())
     return [tok for tok in re.findall(r"[a-z0-9]+", normalized) if len(tok) >= 2]
@@ -49,13 +48,15 @@ def _irrelevant_regex(q: str) -> str:
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
             r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
             r"senza peccato", r"crema di", r"zuppalatte", r"colussi", r"cereali", r"orzo",
-            r"biscott[[:alnum:]_]*",
+            r"biscott[[:alnum:]_]*", r"liquore", r"estratto", r"cacao", r"amaro",
         ],
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato",
         ],
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
+        "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
+        "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*"],
     }
     parts = exclusions.get(tokens[0], [])
     if not parts:
@@ -605,4 +606,3 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
     )
     await db.commit()
     return result
-
