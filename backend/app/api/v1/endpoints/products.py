@@ -49,7 +49,7 @@ def _irrelevant_regex(q: str) -> str:
         ],
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
-            r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato",
+            r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato", r"fiocco", r"fiocchi",
         ],
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
         "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
