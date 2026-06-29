@@ -19,6 +19,7 @@ Flusso negozi (--discover-only):
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -37,6 +38,7 @@ STORES_URL = f"{BASE_URL}/punti-vendita/"
 CHAIN_SLUG = "eurospin"
 SOURCE = "eurospin_web"
 RATE = 2.0  # secondi tra le richieste
+STORE_LIMIT = int(os.getenv('EUROSPIN_STORE_LIMIT', '250'))
 
 HEADERS = {
     "User-Agent": (
@@ -377,15 +379,23 @@ class EurospinSpider:
     # ------------------------------------------------------------------
 
     async def _get_store_ids(self) -> list[str]:
-        """Restituisce gli UUID di tutti i negozi Eurospin attivi nel DB."""
+        """Restituisce un campione controllato di negozi Eurospin attivi."""
         rows = await self.conn.fetch(
             """
             SELECT s.id
             FROM stores s
             JOIN chains c ON s.chain_id = c.id
             WHERE c.slug = $1 AND s.is_active = TRUE
+            ORDER BY
+              CASE WHEN s.province = ANY($2::text[]) THEN 0 ELSE 1 END,
+              s.province NULLS LAST,
+              s.city NULLS LAST,
+              s.external_id
+            LIMIT $3
             """,
             CHAIN_SLUG,
+            ["MI", "RM", "TO", "NA", "BO", "FI", "PA", "GE", "VR", "PD"],
+            STORE_LIMIT,
         )
         return [str(r["id"]) for r in rows]
 
