@@ -45,6 +45,7 @@ const WEEKLY_BASICS = [
 const DINNER_BASICS = ["pasta", "passata", "parmigiano", "insalata", "pane"];
 const BREAKFAST_BASICS = ["latte", "caffe", "biscotti", "yogurt", "cereali"];
 const CLEANING_BASICS = ["detersivo", "carta igienica", "ammorbidente", "spugne"];
+const DEFAULT_LOCATION = { lat: 45.4642, lng: 9.19, label: "Milano" };
 
 const KEYWORD_ITEMS: Record<string, string[]> = {
   colazione: BREAKFAST_BASICS,
@@ -205,7 +206,11 @@ export default function AgentePage() {
     try {
       let activeLocation = location;
       if (!activeLocation) {
-        activeLocation = await requestCurrentLocation();
+        try {
+          activeLocation = await requestCurrentLocation();
+        } catch {
+          activeLocation = DEFAULT_LOCATION;
+        }
         setLocation(activeLocation);
       }
 
@@ -221,7 +226,7 @@ export default function AgentePage() {
       );
       setResult(plan);
     } catch {
-      setError("Non sono riuscito a preparare il piano. Attiva la posizione e riprova.");
+      setError("Non sono riuscito a preparare il piano. Riprova tra poco o scegli una citta.");
     } finally {
       setLoading(false);
     }
@@ -411,7 +416,7 @@ export default function AgentePage() {
 
       {!location && (
         <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
-          Premi il pulsante: ti chiedero la posizione e poi confrontero i negozi vicini.
+          Premi il pulsante: usero la tua posizione se disponibile, altrimenti Milano come riferimento.
         </p>
       )}
 
