@@ -33,7 +33,7 @@ const WEEKLY_BASICS = [
   "riso",
   "pane",
   "uova",
-  "pollo",
+  "petto di pollo",
   "pomodori",
   "insalata",
   "mele",
@@ -55,7 +55,7 @@ const KEYWORD_ITEMS: Record<string, string[]> = {
   casa: CLEANING_BASICS,
   pulizia: CLEANING_BASICS,
   bambini: ["latte", "yogurt", "biscotti", "pasta", "frutta"],
-  palestra: ["pollo", "riso", "uova", "yogurt greco", "banane"],
+  palestra: ["petto di pollo", "riso", "uova", "yogurt greco", "banane"],
 };
 
 function itemKey(item: AgentItem) {
