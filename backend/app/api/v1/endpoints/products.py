@@ -53,7 +53,7 @@ def _irrelevant_regex(q: str) -> str:
         ],
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
         "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
-        "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*"],
+        "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*", r"shell", r"helix", r"detergente", r"doccia", r"eucerin"],
     }
     parts = exclusions.get(tokens[0], [])
     if not parts:
