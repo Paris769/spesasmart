@@ -51,9 +51,13 @@ def _irrelevant_regex(q: str) -> str:
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato", r"fiocco", r"fiocchi",
         ],
-        "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata"],
+        "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask"],
         "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
         "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*", r"shell", r"helix", r"detergente", r"doccia", r"eucerin"],
+        "riso": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pollo": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "mele": [r"aceto", r"succo", r"nettare", r"omogeneizzat[[:alnum:]_]*", r"confettura", r"composta"],
     }
     parts = exclusions.get(tokens[0], [])
     if not parts:
