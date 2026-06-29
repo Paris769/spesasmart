@@ -232,7 +232,7 @@ async def search_products(
                        ) AS ts_score
                 FROM products p
                 WHERE {where}
-                  AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
+                  AND NOT (:has_irrelevant AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :irrelevant_re)
                   AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
                   AND (
                     lower(p.name) ~ :q_word_re

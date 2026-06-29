@@ -233,7 +233,7 @@ _QUICK_ITEM_SQL = text("""
             OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
                 @@ plainto_tsquery('simple', :q_tsquery)
           )
-      AND NOT (:has_irrelevant AND lower(p.name) ~ :irrelevant_re)
+      AND NOT (:has_irrelevant AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :irrelevant_re)
       AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
       AND (
             s.external_id LIKE '%-online'
