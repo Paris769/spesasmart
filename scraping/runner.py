@@ -175,6 +175,7 @@ async def prepare_connection(max_attempts: int = 10) -> asyncpg.Connection:
     for attempt in range(max_attempts):
         conn = await asyncpg.connect(DB_URL)
         try:
+            await conn.execute("SET statement_timeout = 0")
             await conn.execute("SET default_transaction_read_only = off")
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
             await ensure_schema(conn)
