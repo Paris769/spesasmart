@@ -1,0 +1,50 @@
+# Gitleaks rules — bloccano il merge se viene committato un segreto vero
+# (i placeholder *CHANGEME*, *example*, ecc. sono ignorati per design).
+
+title = "spesasmart-agents secret scan"
+
+[[rules]]
+id = "anthropic-key"
+description = "Anthropic API key"
+regex = '''sk-ant-[a-zA-Z0-9_-]{40,}'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+id = "github-pat-fine-grained"
+description = "GitHub fine-grained PAT"
+regex = '''github_pat_[A-Za-z0-9_]{60,}'''
+keywords = ["github_pat_"]
+
+[[rules]]
+id = "github-pat-classic"
+description = "GitHub classic PAT"
+regex = '''ghp_[A-Za-z0-9]{36,}'''
+keywords = ["ghp_"]
+
+[[rules]]
+id = "slack-bot-token"
+description = "Slack bot token"
+regex = '''xoxb-[A-Za-z0-9-]{30,}'''
+keywords = ["xoxb-"]
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS access key id"
+regex = '''AKIA[0-9A-Z]{16}'''
+keywords = ["AKIA"]
+
+[allowlist]
+description = "Placeholder values are allowed"
+regexes = [
+    '''CHANGEME''',
+    '''(?i)example''',
+    '''xxxxxx+''',
+    '''REPLACE_WITH_VAULT_PASSWORD''',
+]
+paths = [
+    '''agents/openclaw/\.gitleaks\.toml''',
+    '''agents/openclaw/tests/test_security_config\.py''',
+    '''agents/openclaw/policy/secrets\.template\.md''',
+    '''agents/openclaw/\.env\.example''',
+    '''agents/openclaw/monitor/audit-anomaly\.py''',
+]
