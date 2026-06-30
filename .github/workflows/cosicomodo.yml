@@ -15,7 +15,7 @@ on:
       max_stores:
         description: "Negozi da scrapare in questo run"
         required: false
-        default: "10"
+        default: "4"
         type: string
       dry_run:
         description: "Dry run (non scrive nel DB)"
@@ -33,6 +33,9 @@ jobs:
     name: Scrape CosìComodo
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    concurrency:
+      group: cosicomodo-scraper
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +52,7 @@ jobs:
       - name: Scrape CosìComodo (Famila / Il Gigante / Italmark)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          COSICOMODO_MAX_STORES: ${{ inputs.max_stores || '10' }}
+          COSICOMODO_MAX_STORES: ${{ inputs.max_stores || '4' }}
           COSICOMODO_CHAINS: ${{ inputs.chains || '' }}
         run: |
           FLAGS=""
