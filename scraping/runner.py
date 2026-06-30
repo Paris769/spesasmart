@@ -158,10 +158,11 @@ async def run_iper(
 ) -> None:
     async with httpx.AsyncClient() as client:
         spider = IperSpider(client, conn, dry_run=dry_run)
-        count = await spider.discover_stores()
         if discover_only:
+            count = await spider.discover_stores()
             print(f"\n=== Negozi Iper upsert: {count} ===")
-
+        else:
+            await spider.run()
 
 async def run_famila(
     conn: asyncpg.Connection, dry_run: bool, discover_only: bool
