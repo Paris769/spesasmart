@@ -23,6 +23,7 @@ from .spiders.carrefour_spider import CarrefourSpider
 from .spiders.eurospin_spider import EurospinSpider
 from .spiders.iper_spider import IperSpider
 from .spiders.coop_spider import CoopSpider
+from .spiders.pam_spider import PamSpider
 from .spiders.famila_spider import FamilaSpider
 from .spiders.cosicomodo_spider import CosiComodoSpider
 from .enrich_images import enrich_images
@@ -172,6 +173,12 @@ async def run_coop(conn: asyncpg.Connection, dry_run: bool) -> None:
         await spider.run()
 
 
+async def run_pam(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = PamSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
 async def run_famila(
     conn: asyncpg.Connection, dry_run: bool, discover_only: bool
 ) -> None:
@@ -224,6 +231,8 @@ async def run_chain(conn: asyncpg.Connection, chain: str, args: argparse.Namespa
         await run_iper(conn, args.dry_run, args.discover_only)
     elif chain == "coop":
         await run_coop(conn, args.dry_run)
+    elif chain == "pam":
+        await run_pam(conn, args.dry_run)
     elif chain == "famila":
         await run_famila(conn, args.dry_run, args.discover_only)
     elif chain == "cosicomodo":
@@ -262,7 +271,7 @@ async def main(args: argparse.Namespace) -> None:
             # ha un suo workflow dedicato.
             # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
             else ["prune", "esselunga", "conad", "carrefour", "eurospin",
-                  "iper", "coop", "famila", "dedup"]
+                  "iper", "coop", "pam", "famila", "dedup"]
         )
 
         for chain in chains:
@@ -287,7 +296,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SpesaSmart scraper runner")
     parser.add_argument(
         "--chain",
-        choices=["esselunga", "conad", "carrefour", "coop", "lidl", "eurospin", "aldi", "md", "penny", "iper", "famila", "cosicomodo", "images", "dedup", "prune", "all"],
+        choices=["esselunga", "conad", "carrefour", "coop", "lidl", "eurospin", "aldi", "md", "penny", "iper", "pam", "famila", "cosicomodo", "images", "dedup", "prune", "all"],
         default="all",
         help="Quale chain scrape (default: all)",
     )
