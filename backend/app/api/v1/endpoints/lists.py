@@ -219,7 +219,7 @@ _QUICK_ITEM_SQL = text("""
                    WHEN lower(p.name) LIKE :q_start THEN 9
                    WHEN lower(p.name) ~ :q_word_re THEN 8
                    WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 7
-                   WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                   WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
                         @@ plainto_tsquery('simple', :q_tsquery) THEN 6
                    ELSE 1
                END AS match_rank
@@ -227,13 +227,13 @@ _QUICK_ITEM_SQL = text("""
         WHERE (
               lower(p.name) ~ :q_word_re
               OR lower(COALESCE(p.brand, '')) ~ :q_word_re
-              OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+              OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '')))
                     @@ plainto_tsquery('simple', :q_tsquery)
             )
-          AND NOT (:has_irrelevant AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :irrelevant_re)
-          AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
+          AND NOT (:has_irrelevant AND lower(p.name || ' ' || COALESCE(p.brand, '')) ~ :irrelevant_re)
+          AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '')) !~ :required_re)
         ORDER BY match_rank DESC, similarity(p.name, :q) DESC, p.updated_at DESC NULLS LAST
-        LIMIT 300
+        LIMIT 80
     )
     SELECT DISTINCT ON (s.id)
         s.id::text          AS store_id,
