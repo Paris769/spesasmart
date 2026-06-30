@@ -271,7 +271,7 @@ async def main(args: argparse.Namespace) -> None:
             # ha un suo workflow dedicato.
             # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
             else ["prune", "esselunga", "conad", "carrefour", "eurospin",
-                  "iper", "coop", "pam", "famila", "dedup"]
+                  "iper", "coop", "famila", "dedup"]
         )
 
         for chain in chains:
