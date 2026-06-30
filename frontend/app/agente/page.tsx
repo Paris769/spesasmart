@@ -252,9 +252,9 @@ export default function AgentePage() {
         <Info size={16} className="mt-0.5 shrink-0" />
         <p>
           SpesaSmart confronta le catene con dati disponibili: Carrefour, Conad,
-          Esselunga, Famila, Il Gigante e Iper. In attivazione: Coop/Ipercoop,
-          Lidl, Eurospin, Aldi, MD e Penny. Alcuni prezzi, negozi o offerte
-          possono non comparire per zona, prodotto o aggiornamento dati.
+          Esselunga, Famila, Il Gigante, Iper, Coop/Ipercoop, Lidl, Eurospin,
+          Aldi, MD, Penny e Pam. Alcuni prezzi, negozi o offerte possono non
+          comparire per zona, prodotto, disponibilita online o aggiornamento dati.
         </p>
       </div>
 
