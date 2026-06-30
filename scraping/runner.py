@@ -22,6 +22,7 @@ from .spiders.conad_spider import ConadSpider
 from .spiders.carrefour_spider import CarrefourSpider
 from .spiders.eurospin_spider import EurospinSpider
 from .spiders.iper_spider import IperSpider
+from .spiders.coop_spider import CoopSpider
 from .spiders.famila_spider import FamilaSpider
 from .spiders.cosicomodo_spider import CosiComodoSpider
 from .enrich_images import enrich_images
@@ -44,7 +45,7 @@ _CHAINS_SEED = [
     ("Esselunga", "esselunga", True,  "https://www.esselunga.it/area-utente/spesa/home.html", "redirect"),
     ("Conad",     "conad",     True,  "https://www.conad.it/conad/home.html",                  "redirect"),
     ("Carrefour", "carrefour", True,  "https://www.carrefour.it/spesa-online/",                 "redirect"),
-    ("Coop",      "coop",      True,  "https://www.cooponline.it",                              "redirect"),
+    ("Coop",      "coop",      True,  "https://www.easycoop.com",                                "api"),
     ("Lidl",      "lidl",      False, None,                                                      "none"),
     ("Eurospin",  "eurospin",  False, None,                                                      "none"),
     ("Pam",       "pam",       True,  "https://www.pampanorama.it/spesa-online",                "redirect"),
@@ -164,6 +165,13 @@ async def run_iper(
         else:
             await spider.run()
 
+
+async def run_coop(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = CoopSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
 async def run_famila(
     conn: asyncpg.Connection, dry_run: bool, discover_only: bool
 ) -> None:
@@ -214,6 +222,8 @@ async def run_chain(conn: asyncpg.Connection, chain: str, args: argparse.Namespa
         await run_eurospin(conn, args.dry_run, args.discover_only)
     elif chain == "iper":
         await run_iper(conn, args.dry_run, args.discover_only)
+    elif chain == "coop":
+        await run_coop(conn, args.dry_run)
     elif chain == "famila":
         await run_famila(conn, args.dry_run, args.discover_only)
     elif chain == "cosicomodo":
@@ -252,7 +262,7 @@ async def main(args: argparse.Namespace) -> None:
             # ha un suo workflow dedicato.
             # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
             else ["prune", "esselunga", "conad", "carrefour", "eurospin",
-                  "iper", "famila", "dedup"]
+                  "iper", "coop", "famila", "dedup"]
         )
 
         for chain in chains:
