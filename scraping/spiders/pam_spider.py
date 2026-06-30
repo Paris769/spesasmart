@@ -269,6 +269,11 @@ class PamSpider:
         barcodes = list(by_bc.keys())
         async with self.conn.transaction():
             id_by_bc, direct_bcs = await resolve_existing(self.conn, barcodes)
+            source_rows = await self.conn.fetch(
+                "SELECT barcode, source FROM products WHERE barcode = ANY($1::text[])",
+                barcodes,
+            )
+            source_by_bc = {r["barcode"]: r["source"] for r in source_rows}
             new_bcs = [bc for bc in barcodes if bc not in id_by_bc]
             if new_bcs:
                 rows = await self.conn.fetch(
@@ -285,7 +290,7 @@ class PamSpider:
                 for r in rows:
                     id_by_bc[r["barcode"]] = r["id"]
 
-            upd = [bc for bc in barcodes if bc in direct_bcs]
+            upd = [bc for bc in barcodes if bc in direct_bcs and source_by_bc.get(bc) == SOURCE]
             if upd:
                 await self.conn.execute(
                     """UPDATE products AS p SET
