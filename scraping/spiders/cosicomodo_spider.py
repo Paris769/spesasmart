@@ -46,6 +46,11 @@ RATE = 0.4           # secondi tra richieste (l'API pubblica non throttla forte)
 # nei 90 min di CI: se ne fa un sottoinsieme a rotazione (seed = giorno) così
 # nell'arco di pochi run si coprono tutti. Override: COSICOMODO_MAX_STORES.
 MAX_STORES = int(os.getenv("COSICOMODO_MAX_STORES", "10"))
+CHAIN_FILTER = {
+    slug.strip().lower()
+    for slug in os.getenv("COSICOMODO_CHAINS", "").split(",")
+    if slug.strip()
+}
 
 # Codici categoria top-level (reparti CosìComodo: /c/10001 … /c/10016)
 CATEGORY_CODES = [str(c) for c in range(10001, 10017)]
@@ -104,7 +109,12 @@ class CosiComodoSpider:
         self.dry_run = dry_run
         self._t_last = 0.0
         self._stores = _load_stores()
-
+        if CHAIN_FILTER:
+            self._stores = [s for s in self._stores if s["chain"] in CHAIN_FILTER]
+            log.info(
+                "Filtro catene Cosicomodo attivo: %s",
+                ", ".join(sorted(CHAIN_FILTER)),
+            )
     # ── HTTP ─────────────────────────────────────────────────────────────────
 
     async def _throttle(self) -> None:

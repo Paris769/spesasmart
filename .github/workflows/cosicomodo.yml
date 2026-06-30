@@ -22,6 +22,11 @@ on:
         required: false
         default: "false"
         type: boolean
+      chains:
+        description: "Catene Cosicomodo da scrapare (es. ilgigante,italmark; vuoto=tutte)"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   scrape:
@@ -45,6 +50,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COSICOMODO_MAX_STORES: ${{ inputs.max_stores || '10' }}
+          COSICOMODO_CHAINS: ${{ inputs.chains || '' }}
         run: |
           FLAGS=""
           if [ "${{ inputs.dry_run }}" = "true" ]; then FLAGS="--dry-run"; fi
