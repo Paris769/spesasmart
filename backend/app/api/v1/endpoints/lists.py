@@ -54,14 +54,14 @@ def _irrelevant_regex(q: str) -> str:
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato", r"fiocco", r"fiocchi",
         ],
-        "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
+        "acqua": [r"bibita", r"energy drink", r"red bull", r"fruity", r"aromatizzat[[:alnum:]_]*", r"limone", r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
         "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
         "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*", r"shell", r"helix", r"detergente", r"doccia", r"eucerin"],
-        "riso": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pollo": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "riso": [r"gallette", r"snack", r"barrett[[:alnum:]_]*", r"soffiato", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pollo": [r"wurstel", r"w.rstel", r"tacchino", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
         "petto": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
         "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "mele": [r"aceto", r"succo", r"nettare", r"omogeneizzat[[:alnum:]_]*", r"confettura", r"composta", r"biscott[[:alnum:]_]*", r"grancereale", r"mirtilli", r"nocciol[[:alnum:]_]*"],
+        "mele": [r"aceto", r"salsa", r"succo", r"nettare", r"omogeneizzat[[:alnum:]_]*", r"confettura", r"composta", r"biscott[[:alnum:]_]*", r"grancereale", r"mirtilli", r"nocciol[[:alnum:]_]*"],
     }
     parts = exclusions.get(tokens[0], [])
     if not parts:
@@ -84,6 +84,11 @@ def _required_regex(q: str) -> str:
             r"classic", r"filtro", r"tradition", r"deka", r"decaffeinat[[:alnum:]_]*",
             r"americano", r"coffee",
         ],
+        "riso": [r"riso", r"risott[[:alnum:]_]*", r"carnaroli", r"arborio", r"basmati", r"roma", r"originario", r"parboiled"],
+        "pollo": [r"pollo", r"petto", r"cosc[[:alnum:]_]*", r"sovracos[[:alnum:]_]*", r"fusi", r"bocconcini", r"filett[[:alnum:]_]*", r"arrosto"],
+        "pomodori": [r"pomodor[[:alnum:]_]*", r"pelati", r"passata", r"datterini", r"ciliegini"],
+        "mele": [r"mele", r"mela", r"golden", r"gala", r"fuji", r"renetta", r"granny"],
+        "acqua": [r"acqua", r"naturale", r"frizzante", r"effervescente", r"minerale"],
     }
     parts = required.get(tokens[0], [])
     if not parts:
@@ -207,6 +212,29 @@ async def remove_item(list_id: str, item_id: str, db: AsyncSession = Depends(get
 # Query SQL: per ogni negozio, il prodotto piu' economico che matcha il testo.
 # DISTINCT ON (s.id) + ORDER BY s.id, price ASC = 1 riga/negozio = il piu' barato.
 _QUICK_ITEM_SQL = text("""
+    WITH candidates AS MATERIALIZED (
+        SELECT p.*,
+               CASE
+                   WHEN lower(p.name) = :q_lower THEN 10
+                   WHEN lower(p.name) LIKE :q_start THEN 9
+                   WHEN lower(p.name) ~ :q_word_re THEN 8
+                   WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 7
+                   WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                        @@ plainto_tsquery('simple', :q_tsquery) THEN 6
+                   ELSE 1
+               END AS match_rank
+        FROM products p
+        WHERE (
+              lower(p.name) ~ :q_word_re
+              OR lower(COALESCE(p.brand, '')) ~ :q_word_re
+              OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
+                    @@ plainto_tsquery('simple', :q_tsquery)
+            )
+          AND NOT (:has_irrelevant AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :irrelevant_re)
+          AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
+        ORDER BY match_rank DESC, similarity(p.name, :q) DESC, p.updated_at DESC NULLS LAST
+        LIMIT 300
+    )
     SELECT DISTINCT ON (s.id)
         s.id::text          AS store_id,
         s.name              AS store_name,
@@ -227,19 +255,11 @@ _QUICK_ITEM_SQL = text("""
         p.id::text          AS product_id,
         p.name              AS product_name,
         p.image_url         AS image_url
-    FROM products p
+    FROM candidates p
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
     JOIN chains c  ON s.chain_id = c.id
-    WHERE pr.price > 0                       -- scarta prezzi nulli/invalidi
-      AND (
-            lower(p.name) ~ :q_word_re
-            OR lower(COALESCE(p.brand, '')) ~ :q_word_re
-            OR to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
-                @@ plainto_tsquery('simple', :q_tsquery)
-          )
-      AND NOT (:has_irrelevant AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :irrelevant_re)
-      AND NOT (:has_required AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) !~ :required_re)
+    WHERE pr.price > 0
       AND (
             s.external_id LIKE '%-online'
             OR ST_DWithin(
@@ -248,22 +268,10 @@ _QUICK_ITEM_SQL = text("""
                  :radius_m
                )
           )
-    -- per ciascun negozio: prima il prodotto piu' PERTINENTE (nome che inizia /
-    -- contiene la parola), poi a parita' di pertinenza il piu' economico. Evita
-    -- che "latte" peschi "panino al latte" solo perche' costa meno.
     ORDER BY s.id,
-             CASE
-                 WHEN lower(p.name) = :q_lower              THEN 8
-                 WHEN to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')))
-                      @@ plainto_tsquery('simple', :q_tsquery) THEN 7
-                 WHEN lower(p.name) ~ :q_word_re            THEN 6
-                 WHEN lower(COALESCE(p.brand, '')) ~ :q_word_re THEN 5
-                 WHEN lower(p.name) LIKE :q_start           THEN 3
-                 ELSE 1
-             END DESC,
+             p.match_rank DESC,
              pr.price ASC
 """)
-
 
 # Variante per prodotto SCELTO: stesso prodotto (p.id) confrontato tra i negozi.
 _QUICK_ITEM_BY_ID_SQL = text("""
