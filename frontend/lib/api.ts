@@ -5,6 +5,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v
 const api = axios.create({
   baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
+  timeout: 15000,
 });
 
 /** Instrada un link d'acquisto attraverso /go (tracking + affiliazione + allowlist).
@@ -59,6 +60,15 @@ export interface Product {
   min_price?: number | null;
   /** Numero di negozi con un prezzo corrente per questo prodotto. */
   price_store_count?: number | null;
+  /** Numero di negozi dove il prodotto risulta disponibile. */
+  available_store_count?: number | null;
+  /** Catena con il miglior prezzo corrente per il risultato in lista. */
+  best_price_chain_name?: string | null;
+  best_price_chain_slug?: string | null;
+  best_price_store_name?: string | null;
+  best_price_in_stock?: boolean | null;
+  best_price_scraped_at?: string | null;
+  best_price_per_unit?: number | null;
 }
 
 export interface PriceResult {
@@ -104,7 +114,7 @@ export const searchProducts = (
     .get<Product[]>("/products/search", {
       params: {
         q,
-        limit: 100,
+        limit: 40,
         lat,
         lng,
         radius_km: radiusKm,
