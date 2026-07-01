@@ -37,9 +37,13 @@ const WEEKLY_BASICS = [
   "pomodori",
   "insalata",
   "mele",
+  "banane",
   "yogurt",
+  "biscotti",
   "acqua",
   "caffe",
+  "olio",
+  "carta igienica",
 ];
 
 const DINNER_BASICS = ["pasta", "passata", "parmigiano", "insalata", "pane"];
@@ -80,22 +84,50 @@ function textItems(items: string[]): AgentItem[] {
   return uniqueItems(items.map((query) => ({ query, label: query, quantity: 1 })));
 }
 
+function normalizePrompt(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s,;\n-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseRequest(text: string): AgentItem[] {
-  const clean = text.toLowerCase();
+  const clean = normalizePrompt(text);
+  if (!clean) return [];
+
   const explicit = text
-    .split(/[\n,;]+/)
+    .split(/\n|,|;/)
     .map((x) => x.replace(/^[-*]\s*/, "").trim())
     .filter((x) => x.length >= 2);
 
   if (explicit.length >= 2) return textItems(explicit);
 
+  if (
+    clean.includes("settiman") ||
+    clean.includes("settimam") ||
+    clean.includes("spesa per la sett") ||
+    clean.includes("spesa della sett") ||
+    clean === "fammi la spesa" ||
+    clean === "fai la spesa"
+  ) {
+    return textItems(WEEKLY_BASICS);
+  }
+
   const matched: string[] = [];
-  for (const [keyword, items] of Object.entries(KEYWORD_ITEMS)) {
-    if (clean.includes(keyword)) matched.push(...items);
+  for (const [keyword, keywordItems] of Object.entries(KEYWORD_ITEMS)) {
+    if (clean.includes(keyword)) matched.push(...keywordItems);
   }
 
   if (matched.length) return textItems(matched);
-  return textItems(text.split(/\s+e\s+|\s+con\s+|,/));
+
+  const fallback = text
+    .split(/\s+e\s+|\s+con\s+|,/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2 && !/^fammi\s+la\s+spesa/i.test(x));
+  return textItems(fallback.length ? fallback : [text]);
 }
 
 function hasProductPrice(p: Product) {
@@ -105,8 +137,9 @@ function hasProductPrice(p: Product) {
 export default function AgentePage() {
   const { location, radiusKm, setLocation } = useAppStore();
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
-  const [items, setItems] = useState<AgentItem[]>(() => parseRequest("spesa per la settimana"));
+  const [items, setItems] = useState<AgentItem[]>([]);
   const [manualItem, setManualItem] = useState("");
+  const [listMessage, setListMessage] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
   const [result, setResult] = useState<QuickOptimizeResult | null>(null);
@@ -145,9 +178,15 @@ export default function AgentePage() {
   }, [result]);
 
   const generateItems = () => {
-    setItems(parseRequest(prompt));
+    const generated = parseRequest(prompt);
+    setItems(generated);
     setResult(null);
     setError(null);
+    setListMessage(
+      generated.length > 0
+        ? `Lista generata: ${generated.length} prodotti. Ora puoi scegliere riferimenti reali o preparare il piano.`
+        : "Non ho capito la richiesta: scrivi almeno un prodotto o una richiesta tipo spesa per la settimana."
+    );
   };
 
   const addItem = (item: AgentItem) => {
@@ -155,6 +194,7 @@ export default function AgentePage() {
     setManualItem("");
     setSuggestions([]);
     setResult(null);
+    setListMessage(null);
   };
 
   const addManualItem = () => {
@@ -265,7 +305,10 @@ export default function AgentePage() {
         <textarea
           id="agent-prompt"
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={(e) => {
+            setPrompt(e.target.value);
+            setListMessage(null);
+          }}
           rows={3}
           className="w-full border-2 border-stone-200 focus:border-primary rounded-xl px-3 py-2 outline-none transition text-sm"
           placeholder="Es. Fammi la spesa per la settimana, oppure latte, pasta, uova..."
@@ -274,8 +317,17 @@ export default function AgentePage() {
           onClick={generateItems}
           className="inline-flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold active:scale-[0.99] transition"
         >
-          <WandSparkles size={17} /> Genera lista
+          <WandSparkles size={17} /> {items.length ? "Rigenera lista" : "Genera lista"}
         </button>
+        {listMessage && (
+          <p className={`text-sm rounded-xl px-3 py-2 border ${
+            items.length
+              ? "text-primary-700 bg-primary-50 border-primary/20"
+              : "text-amber-700 bg-amber-50 border-amber-200"
+          }`}>
+            {listMessage}
+          </p>
+        )}
       </section>
 
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
@@ -288,6 +340,12 @@ export default function AgentePage() {
           </div>
           <span className="text-xs text-stone-500">{items.length} voci</span>
         </div>
+
+        {items.length === 0 && (
+          <div className="rounded-xl border border-dashed border-stone-200 bg-surface px-3 py-4 text-sm text-stone-500">
+            Premi Genera lista: l'agente trasformera la richiesta in prodotti modificabili.
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2">
           {items.map((it) => (
