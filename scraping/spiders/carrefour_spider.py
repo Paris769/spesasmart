@@ -251,9 +251,34 @@ class CarrefourSpider:
                     "price_per_unit": float(price_per_unit) if price_per_unit else None,
                     "image_url": None,  # non presente nel JSON AJAX
                     "promo_label": promo_label,
+                    "in_stock": p.get("available") is not False,
                 }
             )
         return products
+
+    @staticmethod
+    def _tile_in_stock(item) -> bool:
+        """Legge l'eventuale stato stock esposto nella tile prodotto."""
+        text = item.get_text(" ", strip=True).lower()
+        if "non disponibile" in text or "out of stock" in text:
+            return False
+
+        stock_markers: list[str] = []
+        for el in item.select("[data-option-name], [aria-label], button"):
+            for attr in ("data-option-name", "aria-label", "class"):
+                value = el.get(attr)
+                if isinstance(value, list):
+                    value = " ".join(value)
+                if value:
+                    stock_markers.append(str(value).lower())
+            if el.has_attr("disabled") or el.get("aria-disabled") == "true":
+                stock_markers.append("disabled")
+
+        joined = " ".join(stock_markers)
+        return not any(
+            marker in joined
+            for marker in ("outofstock", "out-of-stock", "non disponibile")
+        )
 
     def _parse_products(self, html: str) -> list[dict]:
         """Parsa tutti i product-item dall'HTML di una pagina/fragment."""
@@ -335,6 +360,7 @@ class CarrefourSpider:
                     "price_per_unit": price_per_unit,
                     "image_url": image_url,
                     "promo_label": promo_label,
+                    "in_stock": self._tile_in_stock(item),
                 }
             )
 
@@ -442,10 +468,10 @@ class CarrefourSpider:
                      price_per_unit, in_stock, is_current, source,
                      product_url, scraped_at)
                 SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu,
-                       TRUE, TRUE, 'carrefour_web', v.url, NOW()
+                       v.stock, TRUE, 'carrefour_web', v.url, NOW()
                 FROM unnest($1::uuid[], $3::numeric[], $4::numeric[],
-                            $5::text[], $6::numeric[], $7::text[])
-                     AS v(id, price, orig, promo, ppu, url)
+                            $5::text[], $6::numeric[], $7::boolean[], $8::text[])
+                     AS v(id, price, orig, promo, ppu, stock, url)
                 """,
                 all_ids,
                 store_uuid,
@@ -453,6 +479,7 @@ class CarrefourSpider:
                 [by_bc[bc].get("original_price") for bc in barcodes],
                 [by_bc[bc].get("promo_label") for bc in barcodes],
                 [by_bc[bc].get("price_per_unit") for bc in barcodes],
+                [by_bc[bc].get("in_stock", True) for bc in barcodes],
                 [
                     "https://www.carrefour.it/on/demandware.store"
                     f"/Sites-carrefour-IT-Site/it_IT/Product-Show?pid={bc}"
@@ -460,6 +487,32 @@ class CarrefourSpider:
                 ],
             )
         return len(barcodes)
+
+    async def _mark_missing_products_unavailable(self, store_uuid: str, run_started_at) -> int:
+        """
+        Carrefour rimuove dalla griglia molti prodotti esauriti. Alla fine di una
+        scansione completa, quelli non riapparsi vengono lasciati consultabili ma
+        marcati come non disponibili, invece di sembrare acquistabili.
+        """
+        if self.dry_run:
+            return 0
+        status = await self.conn.execute(
+            """
+            UPDATE prices
+            SET in_stock = FALSE, scraped_at = NOW()
+            WHERE store_id = $1
+              AND is_current = TRUE
+              AND source = 'carrefour_web'
+              AND scraped_at < $2
+              AND in_stock IS DISTINCT FROM FALSE
+            """,
+            store_uuid,
+            run_started_at,
+        )
+        try:
+            return int(status.rsplit(" ", 1)[-1])
+        except (ValueError, IndexError):
+            return 0
 
     # ------------------------------------------------------------------
     # Category scraping
@@ -537,14 +590,30 @@ class CarrefourSpider:
             return 0
         log.info("Store UUID: %s", store_uuid)
 
+        run_started_at = await self.conn.fetchval("SELECT NOW()")
         grand_total = 0
+        successful_categories = 0
         for slug in CATEGORIES:
             try:
                 n = await self.scrape_category(slug, store_uuid)
                 grand_total += n
+                if n > 0:
+                    successful_categories += 1
                 log.info("Categoria %s: %d prodotti", slug, n)
             except Exception as exc:
                 log.exception("Errore categoria %s: %s", slug, exc)
+
+        min_success = max(1, int(len(CATEGORIES) * 0.8))
+        if successful_categories >= min_success:
+            missing = await self._mark_missing_products_unavailable(store_uuid, run_started_at)
+            if missing:
+                log.info("Carrefour: %d prodotti correnti marcati non disponibili", missing)
+        else:
+            log.warning(
+                "Carrefour: salto marcatura indisponibili, categorie riuscite %d/%d",
+                successful_categories,
+                len(CATEGORIES),
+            )
 
         log.info("=== Fine. Prezzi totali scritti: %d ===", grand_total)
         return grand_total
