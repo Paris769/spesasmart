@@ -259,8 +259,12 @@ async def search_products(
                    pr.store_count AS price_store_count
             FROM candidates c
             JOIN LATERAL (
-                SELECT MIN(x.price) AS min_price,
-                       COUNT(DISTINCT x.store_id) AS store_count
+                SELECT COALESCE(
+                           MIN(x.price) FILTER (WHERE x.in_stock IS TRUE),
+                           MIN(x.price)
+                       ) AS min_price,
+                       COUNT(DISTINCT x.store_id) AS store_count,
+                       COUNT(DISTINCT x.store_id) FILTER (WHERE x.in_stock IS TRUE) AS available_store_count
                 FROM prices x
                 JOIN stores s ON x.store_id = s.id
                 WHERE x.product_id = c.id
@@ -360,7 +364,7 @@ async def get_product_prices(
               AND p.is_current  = TRUE
               AND s.is_active   = TRUE
               AND ({geo_filter})
-            ORDER BY p.price ASC
+            ORDER BY p.in_stock DESC, p.price ASC
             LIMIT 30
         """),
         params,
@@ -446,7 +450,7 @@ async def get_product(
             JOIN stores s ON pr.store_id = s.id
             JOIN chains c ON s.chain_id = c.id
             WHERE pr.product_id = :id AND pr.is_current = TRUE AND s.is_active = TRUE
-            ORDER BY c.id, pr.price ASC
+            ORDER BY c.id, pr.in_stock DESC, pr.price ASC
             """
         ),
         {"id": product_id},
