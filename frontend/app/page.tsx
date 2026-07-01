@@ -425,7 +425,7 @@ export default function HomePage() {
                   negozi entro {radiusKm} km
                 </p>
                 <p className="text-[11px] text-stone-400 -mt-1">
-                  La classifica e ordinata solo per prezzo. Alcuni link Acquista
+                  Disponibili mostrati prima, poi prezzo. Alcuni link Acquista
                   possono essere affiliati (ADV).
                 </p>
                 <div className="flex flex-col gap-3">
