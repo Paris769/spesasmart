@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { QuickOptimizeResult, outbound } from "@/lib/api";
+import { RETAIL_SERVICE_CONFIG, minSpendLabel } from "@/lib/retailServices";
 import {
   ArrowRight,
   Check,
@@ -12,9 +13,12 @@ import {
   Split,
   Store as StoreIcon,
   Truck,
+  Handshake,
+  Clock,
+  AlertTriangle,
 } from "lucide-react";
 
-type FulfillmentMode = "delivery" | "pickup";
+type FulfillmentMode = "delivery" | "pickup" | "courier_pickup";
 type StrategyMode = "single" | "multi";
 
 type PlanStore = {
@@ -80,11 +84,27 @@ function buildPlans(result: QuickOptimizeResult) {
 }
 
 function serviceLabel(service: FulfillmentMode) {
-  return service === "delivery" ? "consegna a casa" : "ritiro in negozio";
+  if (service === "delivery") return "consegna a casa";
+  if (service === "pickup") return "ritiro in negozio";
+  return "ritiro con incaricato";
+}
+
+function chainConfig(slug?: string | null) {
+  return RETAIL_SERVICE_CONFIG.find((c) => c.chainSlug === slug);
+}
+
+function serviceMinimum(store: PlanStore, service: FulfillmentMode) {
+  const cfg = chainConfig(store.chain_slug);
+  if (!cfg) return "minimo da confermare";
+  if (service === "delivery") return minSpendLabel(cfg.deliveryMin);
+  if (service === "pickup") return minSpendLabel(cfg.pickupMin);
+  return cfg.pickupDelegate.enabled ? "costo incaricato da stimare" : "non configurato";
 }
 
 function supportsService(store: PlanStore, service: FulfillmentMode) {
-  return service === "delivery" ? store.has_delivery !== false : store.has_click_collect !== false;
+  if (service === "delivery") return store.has_delivery !== false;
+  if (service === "pickup") return store.has_click_collect !== false;
+  return chainConfig(store.chain_slug)?.pickupDelegate.enabled === true;
 }
 
 export default function PurchasePlan({ result }: { result: QuickOptimizeResult }) {
@@ -105,6 +125,13 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
   const unsupportedStores = fulfillment
     ? stores.filter((store) => !supportsService(store, fulfillment))
     : [];
+  const stepLabel = !fulfillment
+    ? "Passo 1 di 3"
+    : mode === null
+    ? "Passo 2 di 3"
+    : confirmed
+    ? "Passo 3 di 3"
+    : "Passo 3 di 3";
 
   const toggle = (k: string) =>
     setDone((prev) => {
@@ -131,7 +158,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
             <p className="font-bold leading-tight flex items-center gap-2">
               Fai la spesa ora
               <span className="text-[10px] font-bold uppercase tracking-wide bg-white/25 px-1.5 py-0.5 rounded-pill">
-                guidato
+                {stepLabel}
               </span>
             </p>
             <p className="text-[12px] text-white/85">
@@ -142,7 +169,14 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
       </div>
 
       <div className="p-4 flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-xl border border-stone-200 bg-surface px-3 py-2 text-[12px] text-stone-600 flex items-start gap-2">
+          <Clock size={14} className="text-primary shrink-0 mt-0.5" />
+          <p>
+            Prima scegli il servizio, poi il piano negozio. Dopo la conferma apri il sito ufficiale, fai login e usa i pulsanti prodotto per costruire il carrello.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
           <button
             onClick={() => {
               setFulfillment("delivery");
@@ -171,10 +205,27 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
             <PackageCheck size={18} className="text-primary shrink-0" />
             <span className="text-sm font-semibold">Ritiro in negozio</span>
           </button>
+          <button
+            onClick={() => {
+              setFulfillment("courier_pickup");
+              setConfirmed(false);
+            }}
+            className={`text-left rounded-btn border p-3 flex items-center gap-2 transition active:scale-[0.99] ${
+              fulfillment === "courier_pickup"
+                ? "border-primary bg-primary-50 text-deep"
+                : "border-stone-200 bg-white text-stone-600"
+            }`}
+          >
+            <Handshake size={18} className="text-primary shrink-0" />
+            <span className="text-sm font-semibold">Ritiro incaricato</span>
+          </button>
         </div>
 
         {fulfillment && mode === null && (
           <div className="flex flex-col gap-2">
+            <div className="rounded-xl border border-primary/20 bg-primary-50 px-3 py-2 text-[12px] text-primary-700">
+              Servizio scelto: <strong>{serviceLabel(fulfillment)}</strong>. Ora scegli se comprare tutto da una catena o dividere la spesa per risparmiare.
+            </div>
             <button
               onClick={() => {
                 setMode("single");
@@ -213,7 +264,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
 
         {!fulfillment && (
           <p className="text-[12px] text-stone-500 bg-surface border border-stone-200 rounded-xl p-3">
-            Scegli prima se vuoi ricevere la spesa a casa o ritirarla in negozio.
+            Scegli prima consegna, ritiro in negozio o ritiro tramite incaricato.
           </p>
         )}
 
@@ -239,7 +290,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                 Conferma e accedi al sito del supermercato
               </div>
               <p className="text-[12px] text-stone-500">
-                Dopo la conferma, fai login sul sito ufficiale del supermercato. Poi l'agente potra aprire i prodotti uno alla volta e inserirli nel carrello guidato; SpesaSmart non legge password, non salva credenziali e non paga.
+                Dopo la conferma, fai login sul sito ufficiale del supermercato. Poi usa i pulsanti prodotto: l'agente apre le schede corrette, ti guida nell'inserimento e tiene il conto di cosa e gia nel carrello. SpesaSmart non legge password, non salva credenziali e non paga.
               </p>
               {!confirmed ? (
                 <button
@@ -250,14 +301,15 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                 </button>
               ) : (
                 <div className="text-[12px] text-green-700 bg-green-50 border border-green-200 rounded-xl p-2">
-                  Prodotti confermati. Ora accedi al sito del supermercato; dopo il login l'agente puo procedere con l'inserimento guidato nel carrello.
+                  Prodotti confermati. Apri il sito, fai login e poi premi Inserisci sui prodotti: l'agente ti guida uno alla volta fino al carrello.
                 </div>
               )}
             </div>
 
             {unsupportedStores.length > 0 && (
-              <p className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
-                Alcuni negozi potrebbero non supportare {serviceLabel(fulfillment)}. Verifica il servizio sul sito ufficiale prima di confermare l'ordine.
+              <p className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex gap-2">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>Alcuni negozi potrebbero non supportare {serviceLabel(fulfillment)}. Verifica il servizio sul sito ufficiale prima di confermare l'ordine.</span>
               </p>
             )}
 
@@ -274,6 +326,12 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                   </div>
                   <span className="text-sm font-bold tnum">EUR {s.total.toFixed(2)}</span>
                 </div>
+                {fulfillment && (
+                  <p className="px-3 pb-2 -mt-1 text-[11px] text-stone-500 bg-surface">
+                    Soglia: {serviceMinimum(s, fulfillment)}
+                    {fulfillment === "courier_pickup" && " - incaricato esterno da prenotare separatamente"}
+                  </p>
+                )}
                 <ul className="divide-y divide-stone-100">
                   {s.items.map((it) => {
                     const isDone = done.has(it.key);
@@ -292,7 +350,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                           <p className={`text-sm leading-snug ${isDone ? "line-through text-stone-400" : "text-stone-800"}`}>
                             {it.product_name}
                           </p>
-                          <p className="text-[11px] text-stone-400">{it.label}</p>
+                          <p className="text-[11px] text-stone-400">richiesta: {it.label}</p>
                         </div>
                         <span className="text-sm font-semibold tnum shrink-0">EUR {it.price.toFixed(2)}</span>
                         {it.product_url ? (
@@ -304,8 +362,9 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                               confirmed ? "bg-primary text-white" : "bg-stone-200 text-stone-500 pointer-events-none"
                             }`}
                             aria-disabled={!confirmed}
+                            title={confirmed ? "Apri prodotto e aggiungilo al carrello" : "Conferma prima prodotti e servizio"}
                           >
-                            Inserisci <ExternalLink size={12} />
+                            {confirmed ? "Inserisci" : "Conferma"} <ExternalLink size={12} />
                           </a>
                         ) : (
                           s.shop_url && (
@@ -340,10 +399,16 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
               </div>
             ))}
 
-            <p className="flex items-start gap-1.5 text-[11px] text-stone-400">
-              <ShieldCheck size={13} className="shrink-0 mt-0.5 text-primary" />
-              L'agente puo preparare e guidare l'inserimento nel carrello sul sito ufficiale. L'ultimo invio ordine e il pagamento restano sempre confermati da te sul sito del supermercato.
-            </p>
+            <div className="grid gap-2 md:grid-cols-2">
+              <p className="flex items-start gap-1.5 text-[11px] text-stone-400">
+                <ShieldCheck size={13} className="shrink-0 mt-0.5 text-primary" />
+                L'agente puo preparare e guidare l'inserimento nel carrello sul sito ufficiale. L'ultimo invio ordine e il pagamento restano sempre confermati da te.
+              </p>
+              <p className="flex items-start gap-1.5 text-[11px] text-stone-400">
+                <Clock size={13} className="shrink-0 mt-0.5 text-primary" />
+                Prezzi, disponibilita, slot e minimi sono da confermare sul sito della catena al momento del checkout.
+              </p>
+            </div>
           </div>
         )}
       </div>

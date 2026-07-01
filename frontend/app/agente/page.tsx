@@ -4,13 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Calculator,
+  CheckCircle2,
+  Clock,
   Info,
   PackageSearch,
   Plus,
   Search,
   ShieldCheck,
   Sparkles,
+  Store,
   Trash2,
+  Truck,
   WandSparkles,
 } from "lucide-react";
 import LocationBar from "@/components/ui/LocationBar";
@@ -37,15 +41,36 @@ const WEEKLY_BASICS = [
   "pomodori",
   "insalata",
   "mele",
+  "banane",
   "yogurt",
+  "biscotti",
   "acqua",
   "caffe",
+  "olio",
+  "carta igienica",
 ];
 
 const DINNER_BASICS = ["pasta", "passata", "parmigiano", "insalata", "pane"];
 const BREAKFAST_BASICS = ["latte", "caffe", "biscotti", "yogurt", "cereali"];
 const CLEANING_BASICS = ["detersivo", "carta igienica", "ammorbidente", "spugne"];
 const DEFAULT_LOCATION = { lat: 45.4642, lng: 9.19, label: "Milano" };
+
+const EXAMPLE_PROMPTS = [
+  "Fammi la spesa per la settimana",
+  "Colazione per 4 persone",
+  "Cena veloce: pasta, tonno, pomodori e insalata",
+  "Spesa palestra con pollo, riso, uova e yogurt greco",
+];
+
+const AGENT_STEPS = [
+  { icon: WandSparkles, title: "1. Creo la lista", text: "Trasformo la richiesta in prodotti modificabili." },
+  { icon: Search, title: "2. Fisso i riferimenti", text: "Puoi scegliere prodotti reali per evitare match sbagliati." },
+  { icon: ShoppingGuideIcon, title: "3. Preparo il carrello", text: "Scegli consegna o ritiro e apri i link ufficiali." },
+];
+
+function ShoppingGuideIcon({ size, className }: { size?: number; className?: string }) {
+  return <Store size={size} className={className} />;
+}
 
 const KEYWORD_ITEMS: Record<string, string[]> = {
   colazione: BREAKFAST_BASICS,
@@ -80,22 +105,50 @@ function textItems(items: string[]): AgentItem[] {
   return uniqueItems(items.map((query) => ({ query, label: query, quantity: 1 })));
 }
 
+function normalizePrompt(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s,;\n-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseRequest(text: string): AgentItem[] {
-  const clean = text.toLowerCase();
+  const clean = normalizePrompt(text);
+  if (!clean) return [];
+
   const explicit = text
-    .split(/[\n,;]+/)
+    .split(/\n|,|;/)
     .map((x) => x.replace(/^[-*]\s*/, "").trim())
     .filter((x) => x.length >= 2);
 
   if (explicit.length >= 2) return textItems(explicit);
 
+  if (
+    clean.includes("settiman") ||
+    clean.includes("settimam") ||
+    clean.includes("spesa per la sett") ||
+    clean.includes("spesa della sett") ||
+    clean === "fammi la spesa" ||
+    clean === "fai la spesa"
+  ) {
+    return textItems(WEEKLY_BASICS);
+  }
+
   const matched: string[] = [];
-  for (const [keyword, items] of Object.entries(KEYWORD_ITEMS)) {
-    if (clean.includes(keyword)) matched.push(...items);
+  for (const [keyword, keywordItems] of Object.entries(KEYWORD_ITEMS)) {
+    if (clean.includes(keyword)) matched.push(...keywordItems);
   }
 
   if (matched.length) return textItems(matched);
-  return textItems(text.split(/\s+e\s+|\s+con\s+|,/));
+
+  const fallback = text
+    .split(/\s+e\s+|\s+con\s+|,/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2 && !/^fammi\s+la\s+spesa/i.test(x));
+  return textItems(fallback.length ? fallback : [text]);
 }
 
 function hasProductPrice(p: Product) {
@@ -105,12 +158,14 @@ function hasProductPrice(p: Product) {
 export default function AgentePage() {
   const { location, radiusKm, setLocation } = useAppStore();
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
-  const [items, setItems] = useState<AgentItem[]>(() => parseRequest("spesa per la settimana"));
+  const [items, setItems] = useState<AgentItem[]>([]);
   const [manualItem, setManualItem] = useState("");
+  const [listMessage, setListMessage] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
   const [result, setResult] = useState<QuickOptimizeResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStage, setLoadingStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -145,9 +200,16 @@ export default function AgentePage() {
   }, [result]);
 
   const generateItems = () => {
-    setItems(parseRequest(prompt));
+    const generated = parseRequest(prompt);
+    setItems(generated);
     setResult(null);
     setError(null);
+    setLoadingStage(null);
+    setListMessage(
+      generated.length > 0
+        ? `Lista generata: ${generated.length} prodotti. Ora puoi scegliere riferimenti reali o preparare il piano.`
+        : "Non ho capito la richiesta: scrivi almeno un prodotto o una richiesta tipo spesa per la settimana."
+    );
   };
 
   const addItem = (item: AgentItem) => {
@@ -155,6 +217,7 @@ export default function AgentePage() {
     setManualItem("");
     setSuggestions([]);
     setResult(null);
+    setListMessage(null);
   };
 
   const addManualItem = () => {
@@ -202,6 +265,7 @@ export default function AgentePage() {
   const runAgent = async () => {
     if (items.length === 0) return;
     setLoading(true);
+    setLoadingStage("Controllo posizione e zona di consegna...");
     setError(null);
     try {
       let activeLocation = location;
@@ -214,6 +278,7 @@ export default function AgentePage() {
         setLocation(activeLocation);
       }
 
+      setLoadingStage("Cerco prodotti, prezzi e disponibilita nelle catene configurate...");
       const plan = await optimizeQuick(
         items.map((item) => ({
           query: item.query,
@@ -224,11 +289,13 @@ export default function AgentePage() {
         activeLocation.lng,
         radiusKm
       );
+      setLoadingStage("Costruisco il piano migliore per consegna o ritiro...");
       setResult(plan);
     } catch {
-      setError("Non sono riuscito a preparare il piano. Riprova tra poco o scegli una citta.");
+      setError("Non sono riuscito a preparare il piano: il servizio dati potrebbe non essere raggiungibile o alcuni prodotti sono troppo generici. Riprova tra poco, scegli Milano o seleziona riferimenti reali dalla lista.");
     } finally {
       setLoading(false);
+      setLoadingStage(null);
     }
   };
 
@@ -248,24 +315,60 @@ export default function AgentePage() {
         </div>
       </header>
 
+      <section className="grid gap-2 md:grid-cols-3">
+        {AGENT_STEPS.map((step) => {
+          const Icon = step.icon;
+          return (
+            <div key={step.title} className="rounded-card border border-stone-200 bg-white p-3 shadow-card flex gap-2">
+              <Icon size={17} className="text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-deep">{step.title}</p>
+                <p className="text-[12px] text-stone-500">{step.text}</p>
+              </div>
+            </div>
+          );
+        })}
+      </section>
+
       <div className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 flex gap-2 text-xs text-amber-900">
         <Info size={16} className="mt-0.5 shrink-0" />
         <p>
           SpesaSmart confronta le catene con dati disponibili: Carrefour, Conad,
-          Esselunga, Famila, Il Gigante e Iper. In attivazione: Coop/Ipercoop,
-          Lidl, Eurospin, Aldi, MD e Penny. Alcuni prezzi, negozi o offerte
-          possono non comparire per zona, prodotto o aggiornamento dati.
+          Esselunga, Famila, Il Gigante, Iper, Coop/Ipercoop, Lidl, Eurospin,
+          Aldi, MD, Penny e Pam. Alcuni prezzi, negozi o offerte possono non
+          comparire per zona, prodotto, disponibilita online o aggiornamento dati.
         </p>
       </div>
 
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
-        <label className="text-sm font-semibold text-deep" htmlFor="agent-prompt">
-          Cosa devo preparare?
-        </label>
+        <div className="flex items-center justify-between gap-2">
+          <label className="text-sm font-semibold text-deep" htmlFor="agent-prompt">
+            Cosa devo preparare?
+          </label>
+          <span className="text-[11px] text-stone-400">puoi scrivere come parleresti a una persona</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {EXAMPLE_PROMPTS.map((example) => (
+            <button
+              key={example}
+              onClick={() => {
+                setPrompt(example);
+                setListMessage(null);
+                setResult(null);
+              }}
+              className="rounded-pill border border-stone-200 bg-surface px-3 py-1.5 text-[12px] font-medium text-stone-700 hover:border-primary hover:text-primary active:scale-[0.98] transition"
+            >
+              {example}
+            </button>
+          ))}
+        </div>
         <textarea
           id="agent-prompt"
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={(e) => {
+            setPrompt(e.target.value);
+            setListMessage(null);
+          }}
           rows={3}
           className="w-full border-2 border-stone-200 focus:border-primary rounded-xl px-3 py-2 outline-none transition text-sm"
           placeholder="Es. Fammi la spesa per la settimana, oppure latte, pasta, uova..."
@@ -274,8 +377,17 @@ export default function AgentePage() {
           onClick={generateItems}
           className="inline-flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold active:scale-[0.99] transition"
         >
-          <WandSparkles size={17} /> Genera lista
+          <WandSparkles size={17} /> {items.length ? "Rigenera lista" : "Genera lista"}
         </button>
+        {listMessage && (
+          <p className={`text-sm rounded-xl px-3 py-2 border ${
+            items.length
+              ? "text-primary-700 bg-primary-50 border-primary/20"
+              : "text-amber-700 bg-amber-50 border-amber-200"
+          }`}>
+            {listMessage}
+          </p>
+        )}
       </section>
 
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
@@ -288,6 +400,12 @@ export default function AgentePage() {
           </div>
           <span className="text-xs text-stone-500">{items.length} voci</span>
         </div>
+
+        {items.length === 0 && (
+          <div className="rounded-xl border border-dashed border-stone-200 bg-surface px-3 py-4 text-sm text-stone-500">
+            Premi Genera lista: l'agente crea una proposta. Poi scegli i riferimenti reali per i prodotti piu ambigui.
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2">
           {items.map((it) => (
@@ -340,6 +458,9 @@ export default function AgentePage() {
 
           {manualItem.trim().length >= 2 && (searching || suggestions.length > 0) && (
             <div className="bg-white border border-stone-200 rounded-xl shadow-float overflow-hidden max-h-[56vh] overflow-y-auto">
+              <p className="px-4 py-2 text-[12px] font-medium text-primary bg-primary-50 border-b border-primary/10">
+                Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano.
+              </p>
               {searching && suggestions.length === 0 && (
                 <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti...</p>
               )}
@@ -371,6 +492,7 @@ export default function AgentePage() {
                         {product.name}
                       </p>
                       {product.brand && <p className="text-[11px] text-stone-400">{product.brand}</p>}
+                      <p className="text-[10px] text-primary font-medium">match prodotto reale</p>
                     </div>
                     {hasPrice ? (
                       <div className="text-right shrink-0">
@@ -397,8 +519,22 @@ export default function AgentePage() {
               </button>
             </div>
           )}
+          {manualItem.trim().length >= 2 && !searching && suggestions.length === 0 && (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+              Non vedo ancora un riferimento preciso: puoi usare il termine come ricerca generica, ma il match sara meno sicuro.
+            </p>
+          )}
         </div>
       </section>
+
+      {items.length > 0 && (
+        <div className="rounded-card border border-stone-200 bg-white p-3 shadow-card flex items-start gap-2 text-sm text-stone-600">
+          <CheckCircle2 size={17} className="text-primary shrink-0 mt-0.5" />
+          <p>
+            Prima preparo il piano, poi ti faccio scegliere consegna a casa, ritiro in negozio o ritiro tramite incaricato. I prodotti non trovati verranno segnalati prima del carrello.
+          </p>
+        </div>
+      )}
 
       <button
         onClick={runAgent}
@@ -406,7 +542,7 @@ export default function AgentePage() {
         className="inline-flex items-center justify-center gap-2 bg-secondary text-white px-4 py-3 rounded-xl text-sm font-bold disabled:opacity-50 active:scale-[0.99] transition"
       >
         {loading ? (
-          <>Calcolo in corso...</>
+          <>{loadingStage || "Calcolo in corso..."}</>
         ) : (
           <>
             <Calculator size={18} /> {location ? "Prepara piano automatico" : "Usa posizione e prepara piano"}
@@ -420,6 +556,12 @@ export default function AgentePage() {
         </p>
       )}
 
+      {loadingStage && (
+        <div className="rounded-xl border border-primary/20 bg-primary-50 px-3 py-2 text-sm text-primary-700 flex items-center gap-2">
+          <Clock size={16} className="shrink-0" /> {loadingStage}
+        </div>
+      )}
+
       {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{error}</p>}
 
       {estimatedMode && (
@@ -428,6 +570,22 @@ export default function AgentePage() {
           <span className="font-semibold">{estimatedMode}</span>
         </div>
       )}
+
+      {result && (
+        <div className="rounded-card border border-stone-200 bg-white p-3 shadow-card flex items-start gap-2 text-sm text-stone-600">
+          <Truck size={17} className="text-primary shrink-0 mt-0.5" />
+          <p>
+            Ho trovato {result.n_findable} prodotti su {result.n_items}. Ora scegli consegna o ritiro: mostro minimi, servizi e link ufficiali prima del carrello.
+          </p>
+        </div>
+      )}
+
+      {result?.not_found?.length ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="font-semibold">Da rivedere prima dell'acquisto</p>
+          <p className="mt-1">Non ho trovato: {result.not_found.join(", ")}. Prova con nomi piu generici o scegli un riferimento reale dalla lista.</p>
+        </div>
+      ) : null}
 
       {result && <PurchasePlan result={result} />}
 
