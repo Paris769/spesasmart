@@ -41,6 +41,7 @@ API_BASE = "https://api.cosicomodo.it/occ/v2"
 IMG_BASE = "https://images.cosicomodo.it"
 PAGE_SIZE = 100
 RATE = 0.4           # secondi tra richieste (l'API pubblica non throttla forte)
+MIN_VALID_PRICE = 0.10  # prezzi inferiori sono placeholder/anomalie non acquistabili
 
 # Negozi scrapati per esecuzione. A catalogo pieno tutti i negozi non stanno
 # nei 90 min di CI: se ne fa un sottoinsieme a rotazione (seed = giorno) così
@@ -232,7 +233,7 @@ class CosiComodoSpider:
         if not raw_code or not name:
             return None
         current, original, promo_label = self._extract_prices(p)
-        if current <= 0:
+        if current < MIN_VALID_PRICE:
             return None
         price_obj = p.get("discountedPrice") if p.get("flagPromo") else p.get("price")
         ppu: Optional[float] = None
