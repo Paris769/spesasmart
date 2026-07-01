@@ -11,6 +11,8 @@ from app.db.session import get_db
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
+MIN_VALID_PRICE = 0.10
+
 
 def _strip_accents(value: str) -> str:
     return "".join(
@@ -259,7 +261,7 @@ _QUICK_ITEM_SQL = text("""
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
     JOIN chains c  ON s.chain_id = c.id
-    WHERE pr.price > 0
+    WHERE pr.price >= :min_valid_price
       AND (
             s.external_id LIKE '%-online'
             OR ST_DWithin(
@@ -299,7 +301,7 @@ _QUICK_ITEM_BY_ID_SQL = text("""
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
     JOIN chains c  ON s.chain_id = c.id
-    WHERE pr.price > 0
+    WHERE pr.price >= :min_valid_price
       AND p.id = :pid
       AND (
             s.external_id LIKE '%-online'
@@ -353,7 +355,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         if pid_valid:
             rows = (await db.execute(_QUICK_ITEM_BY_ID_SQL, {
                 "pid": pid_valid,
-                "lat": body.lat, "lng": body.lng, "radius_m": radius_m,
+                "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
             })).mappings().all()
 
         if not rows:
@@ -368,7 +370,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "has_required": _has_required_terms(q),
                 "q_lower": ql, "q_start": f"{ql} %",
                 "q_mid": f"% {ql} %", "q_end": f"% {ql}",
-                "lat": body.lat, "lng": body.lng, "radius_m": radius_m,
+                "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
             })).mappings().all()
 
         if not rows:
@@ -503,6 +505,7 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
             JOIN chains c ON s.chain_id = c.id
             WHERE p.product_id = ANY(:pids::uuid[])
               AND p.is_current = TRUE
+              AND p.price >= :min_valid_price
               AND s.is_active  = TRUE
               AND ST_DWithin(
                     s.coordinates::geography,
@@ -516,6 +519,7 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
             "lat": body.lat,
             "lng": body.lng,
             "radius_m": body.radius_km * 1000,
+            "min_valid_price": MIN_VALID_PRICE,
         },
     )
     all_prices = prices_res.mappings().all()
