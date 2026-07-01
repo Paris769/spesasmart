@@ -88,17 +88,24 @@ function itemKey(item: AgentItem) {
 }
 
 function uniqueItems(items: AgentItem[]): AgentItem[] {
-  const seen = new Set<string>();
-  return items
-    .map((item) => ({ ...item, query: item.query.trim(), label: item.label?.trim() || item.query.trim() }))
-    .filter((item) => item.query.length >= 2)
-    .filter((item) => {
-      const key = itemKey(item);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 40);
+  const byKey = new Map<string, AgentItem>();
+  for (const rawItem of items) {
+    const item = {
+      ...rawItem,
+      query: rawItem.query.trim(),
+      label: rawItem.label?.trim() || rawItem.query.trim(),
+      quantity: rawItem.quantity || 1,
+    };
+    if (item.query.length < 2) continue;
+    const key = itemKey(item);
+    const existing = byKey.get(key);
+    if (existing) {
+      byKey.set(key, { ...existing, quantity: (existing.quantity || 1) + (item.quantity || 1) });
+      continue;
+    }
+    byKey.set(key, item);
+  }
+  return Array.from(byKey.values()).slice(0, 40);
 }
 
 function textItems(items: string[]): AgentItem[] {
@@ -155,6 +162,10 @@ function hasProductPrice(p: Product) {
   return p.min_price != null && (p.price_store_count ?? 0) > 0;
 }
 
+function firstGenericItem(items: AgentItem[]) {
+  return items.find((item) => !item.product_id);
+}
+
 export default function AgentePage() {
   const { location, radiusKm, setLocation } = useAppStore();
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
@@ -177,19 +188,23 @@ export default function AgentePage() {
       return;
     }
 
+    let cancelled = false;
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
         const found = await searchProducts(term, location?.lat, location?.lng, radiusKm);
-        setSuggestions(found.slice(0, 8));
+        if (!cancelled) setSuggestions(found.slice(0, 8));
       } catch {
-        setSuggestions([]);
+        if (!cancelled) setSuggestions([]);
       } finally {
-        setSearching(false);
+        if (!cancelled) setSearching(false);
       }
     }, 250);
 
-    return () => clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [manualItem, location, radiusKm]);
 
   const estimatedMode = useMemo(() => {
@@ -200,9 +215,24 @@ export default function AgentePage() {
       : `Conviene fare tutto da ${result.best_single.chain_name}`;
   }, [result]);
 
+  const focusNextGeneric = (nextItems: AgentItem[], message: string) => {
+    const nextGeneric = firstGenericItem(nextItems);
+    setSuggestions([]);
+    setResult(null);
+    if (!nextGeneric) {
+      setResolveTarget(null);
+      setManualItem("");
+      setListMessage(message);
+      return;
+    }
+    setResolveTarget(itemKey(nextGeneric));
+    setManualItem(nextGeneric.query);
+    setListMessage(`${message} Ora scegli marca e formato per "${nextGeneric.query}".`);
+  };
+
   const generateItems = () => {
     const generated = parseRequest(prompt);
-    const firstGeneric = generated.find((item) => !item.product_id);
+    const firstGeneric = firstGenericItem(generated);
     setItems(generated);
     setResolveTarget(firstGeneric ? itemKey(firstGeneric) : null);
     setManualItem(firstGeneric?.query || "");
@@ -230,18 +260,13 @@ export default function AgentePage() {
     const query = manualItem.trim();
     if (query.length < 2) return;
     if (resolveTarget) {
-      setItems((prev) =>
-        uniqueItems(
-          prev.map((item) =>
-            itemKey(item) === resolveTarget ? { query, label: query, quantity: 1 } : item
-          )
+      const nextItems = uniqueItems(
+        items.map((item) =>
+          itemKey(item) === resolveTarget ? { query, label: query, quantity: 1 } : item
         )
       );
-      setManualItem("");
-      setResolveTarget(null);
-      setSuggestions([]);
-      setResult(null);
-      setListMessage(`Usero "${query}" come ricerca generica: il match sara meno preciso.`);
+      setItems(nextItems);
+      focusNextGeneric(nextItems, `Usero "${query}" come ricerca generica: il match sara meno preciso.`);
       return;
     }
     addItem({ query, label: query, quantity: 1 });
@@ -258,14 +283,11 @@ export default function AgentePage() {
       quantity: 1,
     };
     if (resolveTarget) {
-      setItems((prev) =>
-        uniqueItems(prev.map((item) => (itemKey(item) === resolveTarget ? selected : item)))
+      const nextItems = uniqueItems(
+        items.map((item) => (itemKey(item) === resolveTarget ? selected : item))
       );
-      setManualItem("");
-      setResolveTarget(null);
-      setSuggestions([]);
-      setResult(null);
-      setListMessage(`Prodotto scelto: ${product.name}.`);
+      setItems(nextItems);
+      focusNextGeneric(nextItems, `Prodotto scelto: ${product.name}.`);
       return;
     }
     addItem(selected);
@@ -275,6 +297,7 @@ export default function AgentePage() {
     setResolveTarget(itemKey(item));
     setManualItem(item.query);
     setSuggestions([]);
+    setListMessage(`Stai scegliendo marca e formato per "${item.query}".`);
   };
 
   const removeItem = (key: string) => {
@@ -452,43 +475,50 @@ export default function AgentePage() {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {items.map((it) => (
-            <span
-              key={itemKey(it)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-surface pl-1.5 pr-2 py-1 text-sm max-w-full"
-            >
-              {it.image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={it.image_url}
-                  alt=""
-                  className="w-6 h-6 rounded-full object-contain bg-white border border-stone-100 shrink-0"
-                />
-              ) : (
-                <span className="w-6 h-6 rounded-full bg-stone-100 grid place-items-center text-stone-400 shrink-0">
-                  <PackageSearch size={13} />
-                </span>
-              )}
-              <span className="truncate max-w-[190px]">{it.label || it.query}</span>
-              {it.product_id ? (
-                <span className="text-[10px] text-primary font-bold">scelto</span>
-              ) : (
-                <button
-                  onClick={() => startResolveItem(it)}
-                  className="text-[10px] text-primary font-bold hover:underline"
-                >
-                  scegli
-                </button>
-              )}
-              <button
-                onClick={() => removeItem(itemKey(it))}
-                aria-label={`Rimuovi ${it.label || it.query}`}
-                className="text-stone-400 hover:text-red-600 shrink-0"
+          {items.map((it) => {
+            const key = itemKey(it);
+            const isResolving = resolveTarget === key;
+            return (
+              <span
+                key={key}
+                className={`inline-flex items-center gap-1.5 rounded-full border pl-1.5 pr-2 py-1 text-sm max-w-full ${
+                  isResolving ? "border-primary bg-primary-50" : "border-stone-200 bg-surface"
+                }`}
               >
-                <Trash2 size={13} />
-              </button>
-            </span>
-          ))}
+                {it.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={it.image_url}
+                    alt=""
+                    className="w-6 h-6 rounded-full object-contain bg-white border border-stone-100 shrink-0"
+                  />
+                ) : (
+                  <span className="w-6 h-6 rounded-full bg-stone-100 grid place-items-center text-stone-400 shrink-0">
+                    <PackageSearch size={13} />
+                  </span>
+                )}
+                <span className="truncate max-w-[190px]">{it.label || it.query}</span>
+                {it.product_id ? (
+                  <span className="text-[10px] text-primary font-bold">scelto</span>
+                ) : (
+                  <button
+                    onClick={() => startResolveItem(it)}
+                    aria-label={`Scegli marca e formato per ${it.label || it.query}`}
+                    className="text-[10px] text-primary font-bold hover:underline"
+                  >
+                    {isResolving ? "in scelta" : "scegli"}
+                  </button>
+                )}
+                <button
+                  onClick={() => removeItem(key)}
+                  aria-label={`Rimuovi ${it.label || it.query}`}
+                  className="text-stone-400 hover:text-red-600 shrink-0"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            );
+          })}
         </div>
 
         <div className="relative flex flex-col gap-2">
@@ -503,7 +533,7 @@ export default function AgentePage() {
             <button
               onClick={useManualAsGeneric}
               className="w-11 rounded-xl bg-stone-900 text-white grid place-items-center"
-              aria-label="Aggiungi prodotto"
+              aria-label={resolveTarget ? "Usa testo come ricerca generica per la voce selezionata" : "Aggiungi prodotto"}
             >
               <Plus size={18} />
             </button>
