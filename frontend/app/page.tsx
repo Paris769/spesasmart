@@ -26,6 +26,8 @@ import {
   Sparkles,
   ArrowRight,
   ShieldCheck,
+  Clock,
+  CheckCircle2,
 } from "lucide-react";
 
 const QUICK_SEARCHES = ["latte", "tonno rio", "caffe", "pasta", "uova", "acqua"];
@@ -40,6 +42,11 @@ function serviceSummary() {
 function SmartHome({ onQuickSearch }: { onQuickSearch: (q: string) => void }) {
   const summary = serviceSummary();
   const highlightedChains = RETAIL_SERVICE_CONFIG.slice(0, 6);
+  const primaryTasks = [
+    { icon: Bot, label: "Spesa settimanale", detail: "Lista completa e piano pronto", href: "/agente" },
+    { icon: Search, label: "Confronta un prezzo", detail: "Risultati con fonte e disponibilita", action: () => onQuickSearch("tonno rio") },
+    { icon: Truck, label: "Consegna o ritiro", detail: "Minimi e servizi prima del checkout", href: "/agente" },
+  ];
 
   return (
     <div className="flex flex-col gap-4">
@@ -53,10 +60,56 @@ function SmartHome({ onQuickSearch }: { onQuickSearch: (q: string) => void }) {
             <div className="min-w-0">
               <h1 className="text-xl font-extrabold leading-tight">La spesa migliore, prima di aprire il carrello</h1>
               <p className="text-sm text-white/85 mt-1">
-                Cerca un prodotto, genera una lista completa o prepara consegna, ritiro e ritiro tramite incaricato.
+                Genera la lista, confronta prezzi reali e scegli consegna, ritiro o ritiro tramite incaricato.
               </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  href="/agente"
+                  className="inline-flex items-center gap-2 rounded-xl bg-white text-primary px-3 py-2 text-sm font-bold active:scale-[0.99] transition"
+                >
+                  <Bot size={16} /> Fai la spesa con l'agente
+                </Link>
+                <button
+                  onClick={() => onQuickSearch("latte")}
+                  className="inline-flex items-center gap-2 rounded-xl bg-white/15 border border-white/25 text-white px-3 py-2 text-sm font-bold active:scale-[0.99] transition"
+                >
+                  <Search size={16} /> Cerca un prodotto
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+
+        <div className="p-4 grid gap-2 md:grid-cols-3 border-b border-stone-100">
+          {primaryTasks.map((task) => {
+            const Icon = task.icon;
+            const content = (
+              <>
+                <Icon size={19} className="text-primary shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold text-deep">{task.label}</span>
+                  <span className="block text-[12px] text-stone-500">{task.detail}</span>
+                </span>
+              </>
+            );
+            return task.href ? (
+              <Link
+                key={task.label}
+                href={task.href}
+                className="rounded-btn border border-primary/25 bg-primary-50 p-3 flex items-center gap-3 active:scale-[0.99] transition"
+              >
+                {content}
+              </Link>
+            ) : (
+              <button
+                key={task.label}
+                onClick={task.action}
+                className="rounded-btn border border-stone-200 bg-white p-3 flex items-center gap-3 text-left active:scale-[0.99] transition"
+              >
+                {content}
+              </button>
+            );
+          })}
         </div>
 
         <div className="p-4 grid gap-2 sm:grid-cols-3">
@@ -108,6 +161,32 @@ function SmartHome({ onQuickSearch }: { onQuickSearch: (q: string) => void }) {
           <Handshake size={19} className="text-accent" />
           <p className="mt-2 text-sm font-bold text-deep">Ritiro con incaricato</p>
           <p className="text-[12px] text-stone-500">{summary.delegated} catene predisposte per delega/servizio esterno dove consentito.</p>
+        </div>
+      </section>
+
+      <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 size={17} className="text-primary shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-deep">Risultati piu affidabili</p>
+              <p className="text-[12px] text-stone-500">Disponibilita e prezzi anomali vengono evidenziati o esclusi.</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <Clock size={17} className="text-primary shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-deep">Dati da verificare</p>
+              <p className="text-[12px] text-stone-500">Ogni prezzo rimanda al sito ufficiale per conferma finale.</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <ShieldCheck size={17} className="text-primary shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-deep">Ordine sotto controllo</p>
+              <p className="text-[12px] text-stone-500">Login, pagamento e invio ordine restano sempre confermati da te.</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -292,13 +371,18 @@ export default function HomePage() {
       {showSmartHome && <SmartHome onQuickSearch={startSearch} />}
 
       {!selectedProduct && searching && debouncedQuery.length >= 2 && (
-        <PriceCardSkeletonList n={4} />
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-stone-500 bg-white border border-stone-200 rounded-xl px-3 py-2 shadow-card">
+            Sto cercando "{debouncedQuery}" e controllo prezzi, disponibilita e catene compatibili.
+          </p>
+          <PriceCardSkeletonList n={4} />
+        </div>
       )}
 
       {!selectedProduct && !searching && products && products.length > 0 && (
         <div>
           <p className="text-xs text-stone-400 mb-1.5 px-1">
-            {products.length} prodotti - tocca per vedere i prezzi vicino a te
+            {products.length} prodotti - ordinati dando priorita a prezzo disponibile e pertinenza
           </p>
           <ul className="bg-white border border-stone-200 rounded-card shadow-card divide-y divide-stone-100 overflow-y-auto max-h-[62vh]">
             {products.map((p) => {
