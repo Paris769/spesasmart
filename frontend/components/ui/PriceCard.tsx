@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   TrendingDown,
   ShoppingCart,
+  AlertTriangle,
 } from "lucide-react";
 
 interface Props {
@@ -38,7 +39,8 @@ const CHAIN_DOT: Record<string, string> = {
 };
 
 export default function PriceCard({ result, rank, avgPrice, imageUrl }: Props) {
-  const isBest = rank === 0;
+  const unavailable = result.in_stock === false;
+  const isBest = rank === 0 && !unavailable;
   const dot = CHAIN_DOT[result.chain_slug] ?? "#6B7280";
   const price = useCountUp(result.price, 480);
   const [eur, cent] = price.toFixed(2).split(".");
@@ -64,7 +66,9 @@ export default function PriceCard({ result, rank, avgPrice, imageUrl }: Props) {
   return (
     <div
       className={`relative overflow-hidden rounded-2xl p-3.5 flex gap-3 animate-pop-in transition active:scale-[0.99] ${
-        isBest
+        unavailable
+          ? "bg-red-50/40 border border-red-200 shadow-card"
+          : isBest
           ? "bg-primary-50 ring-1 ring-primary/40 shadow-best"
           : "bg-white border border-stone-200 shadow-card"
       }`}
@@ -101,10 +105,19 @@ export default function PriceCard({ result, rank, avgPrice, imageUrl }: Props) {
               <Crown size={11} /> MIGLIORE
             </span>
           )}
+          {unavailable && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded-pill">
+              <AlertTriangle size={11} /> NON DISPONIBILE
+            </span>
+          )}
         </div>
 
         <p className="text-[13px] text-stone-500 flex items-center gap-1 leading-tight">
-          {result.is_online ? (
+          {unavailable ? (
+            <>
+              <AlertTriangle size={13} className="text-red-600" /> Non disponibile sul sito
+            </>
+          ) : result.is_online ? (
             <>
               <Globe size={13} /> Spesa online · tutta Italia
             </>
@@ -161,12 +174,14 @@ export default function PriceCard({ result, rank, avgPrice, imageUrl }: Props) {
               target="_blank"
               rel="noopener noreferrer"
               className={`ml-auto inline-flex items-center gap-1 text-[13px] px-3 py-1.5 rounded-btn font-semibold transition active:scale-95 ${
-                isBest
+                unavailable
+                  ? "bg-stone-200 text-stone-700 hover:bg-stone-300"
+                  : isBest
                   ? "bg-primary text-white hover:bg-primary-700"
                   : "bg-stone-900 text-white hover:bg-stone-700"
               }`}
             >
-              Acquista <ArrowUpRight size={15} />
+              {unavailable ? "Verifica" : "Acquista"} <ArrowUpRight size={15} />
             </a>
           )}
           {freshness && !result.shop_url && (
