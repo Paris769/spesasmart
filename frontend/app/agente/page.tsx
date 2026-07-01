@@ -83,8 +83,37 @@ const KEYWORD_ITEMS: Record<string, string[]> = {
   palestra: ["petto di pollo", "riso", "uova", "yogurt greco", "banane"],
 };
 
+function cleanItemQuery(value: string) {
+  return value
+    .replace(/^[-*]\s*/, "")
+    .replace(/\bkefyr\b/gi, "kefir")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstInputSegment(value: string) {
+  return cleanItemQuery(value.split(/\n|,|;/)[0] || "");
+}
+
+function buildResolveSearchTerm(value: string, currentItem?: AgentItem) {
+  const typed = firstInputSegment(value);
+  const current = cleanItemQuery(currentItem?.query || "");
+  if (!current) return typed;
+  if (!typed) return current;
+  const currentFirstWord = current.split(/\s+/)[0]?.toLowerCase();
+  return currentFirstWord && typed.toLowerCase().includes(currentFirstWord)
+    ? typed
+    : `${current} ${typed}`.trim();
+}
+
+function fallbackSearchTerms(term: string, currentItem?: AgentItem) {
+  const current = cleanItemQuery(currentItem?.query || "");
+  const firstWord = term.split(/\s+/)[0] || "";
+  return Array.from(new Set([term, current, firstWord].map(cleanItemQuery).filter((x) => x.length >= 2)));
+}
+
 function itemKey(item: AgentItem) {
-  return item.product_id || item.query.toLowerCase();
+  return item.product_id || cleanItemQuery(item.query).toLowerCase();
 }
 
 function uniqueItems(items: AgentItem[]): AgentItem[] {
@@ -92,8 +121,8 @@ function uniqueItems(items: AgentItem[]): AgentItem[] {
   for (const rawItem of items) {
     const item = {
       ...rawItem,
-      query: rawItem.query.trim(),
-      label: rawItem.label?.trim() || rawItem.query.trim(),
+      query: cleanItemQuery(rawItem.query),
+      label: cleanItemQuery(rawItem.label || rawItem.query),
       quantity: rawItem.quantity || 1,
     };
     if (item.query.length < 2) continue;
@@ -109,7 +138,7 @@ function uniqueItems(items: AgentItem[]): AgentItem[] {
 }
 
 function textItems(items: string[]): AgentItem[] {
-  return uniqueItems(items.map((query) => ({ query, label: query, quantity: 1 })));
+  return uniqueItems(items.map((query) => ({ query: cleanItemQuery(query), label: cleanItemQuery(query), quantity: 1 })));
 }
 
 function normalizePrompt(text: string) {
@@ -128,7 +157,7 @@ function parseRequest(text: string): AgentItem[] {
 
   const explicit = text
     .split(/\n|,|;/)
-    .map((x) => x.replace(/^[-*]\s*/, "").trim())
+    .map((x) => cleanItemQuery(x))
     .filter((x) => x.length >= 2);
 
   if (explicit.length >= 2) return textItems(explicit);
@@ -180,8 +209,17 @@ export default function AgentePage() {
   const [loadingStage, setLoadingStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const resolvingItem = useMemo(
+    () => items.find((item) => resolveTarget && itemKey(item) === resolveTarget),
+    [items, resolveTarget]
+  );
+  const suggestionTerm = useMemo(
+    () => (resolveTarget ? buildResolveSearchTerm(manualItem, resolvingItem) : cleanItemQuery(manualItem)),
+    [manualItem, resolveTarget, resolvingItem]
+  );
+
   useEffect(() => {
-    const term = manualItem.trim();
+    const term = suggestionTerm.trim();
     if (term.length < 2) {
       setSuggestions([]);
       setSearching(false);
@@ -192,7 +230,11 @@ export default function AgentePage() {
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
-        const found = await searchProducts(term, location?.lat, location?.lng, radiusKm);
+        let found: Product[] = [];
+        for (const candidate of fallbackSearchTerms(term, resolvingItem)) {
+          found = await searchProducts(candidate, location?.lat, location?.lng, radiusKm);
+          if (found.length > 0) break;
+        }
         if (!cancelled) setSuggestions(found.slice(0, 8));
       } catch {
         if (!cancelled) setSuggestions([]);
@@ -205,7 +247,7 @@ export default function AgentePage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [manualItem, location, radiusKm]);
+  }, [suggestionTerm, resolvingItem, location, radiusKm]);
 
   const estimatedMode = useMemo(() => {
     if (!result?.best_single) return null;
@@ -257,7 +299,7 @@ export default function AgentePage() {
   };
 
   const useManualAsGeneric = () => {
-    const query = manualItem.trim();
+    const query = resolveTarget ? suggestionTerm : cleanItemQuery(manualItem);
     if (query.length < 2) return;
     if (resolveTarget) {
       const nextItems = uniqueItems(
@@ -539,10 +581,10 @@ export default function AgentePage() {
             </button>
           </div>
 
-          {manualItem.trim().length >= 2 && (searching || suggestions.length > 0) && (
+          {suggestionTerm.length >= 2 && (searching || suggestions.length > 0) && (
             <div className="bg-white border border-stone-200 rounded-xl shadow-float overflow-hidden max-h-[56vh] overflow-y-auto">
               <p className="px-4 py-2 text-[12px] font-medium text-primary bg-primary-50 border-b border-primary/10">
-                {resolveTarget ? `Scegli quale ${manualItem.trim()} vuoi: marca, formato e prezzo reale.` : "Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano."}
+                {resolveTarget ? `Scegli quale ${suggestionTerm} vuoi: marca, formato e prezzo reale.` : "Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano."}
               </p>
               {searching && suggestions.length === 0 && (
                 <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti...</p>
@@ -598,11 +640,11 @@ export default function AgentePage() {
                 onClick={useManualAsGeneric}
                 className="w-full px-3 py-2 text-left text-[12px] text-stone-500 hover:bg-surface"
               >
-                + Usa "{manualItem.trim()}" come ricerca generica
+                + Usa "{suggestionTerm}" come ricerca generica
               </button>
             </div>
           )}
-          {manualItem.trim().length >= 2 && !searching && suggestions.length === 0 && (
+          {suggestionTerm.length >= 2 && !searching && suggestions.length === 0 && (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
               Non vedo ancora un riferimento preciso: puoi usare il termine come ricerca generica, ma il match sara meno sicuro.
             </p>
