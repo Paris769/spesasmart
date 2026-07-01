@@ -160,6 +160,7 @@ export default function AgentePage() {
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
   const [items, setItems] = useState<AgentItem[]>([]);
   const [manualItem, setManualItem] = useState("");
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const [listMessage, setListMessage] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
@@ -201,13 +202,17 @@ export default function AgentePage() {
 
   const generateItems = () => {
     const generated = parseRequest(prompt);
+    const firstGeneric = generated.find((item) => !item.product_id);
     setItems(generated);
+    setResolveTarget(firstGeneric ? itemKey(firstGeneric) : null);
+    setManualItem(firstGeneric?.query || "");
+    setSuggestions([]);
     setResult(null);
     setError(null);
     setLoadingStage(null);
     setListMessage(
       generated.length > 0
-        ? `Lista generata: ${generated.length} prodotti. Ora puoi scegliere riferimenti reali o preparare il piano.`
+        ? `Lista generata: ${generated.length} prodotti. Scegli marca e formato per i prodotti ambigui.`
         : "Non ho capito la richiesta: scrivi almeno un prodotto o una richiesta tipo spesa per la settimana."
     );
   };
@@ -215,31 +220,70 @@ export default function AgentePage() {
   const addItem = (item: AgentItem) => {
     setItems((prev) => uniqueItems([...prev, item]));
     setManualItem("");
+    setResolveTarget(null);
     setSuggestions([]);
     setResult(null);
     setListMessage(null);
   };
 
-  const addManualItem = () => {
+  const useManualAsGeneric = () => {
     const query = manualItem.trim();
     if (query.length < 2) return;
+    if (resolveTarget) {
+      setItems((prev) =>
+        uniqueItems(
+          prev.map((item) =>
+            itemKey(item) === resolveTarget ? { query, label: query, quantity: 1 } : item
+          )
+        )
+      );
+      setManualItem("");
+      setResolveTarget(null);
+      setSuggestions([]);
+      setResult(null);
+      setListMessage(`Usero "${query}" come ricerca generica: il match sara meno preciso.`);
+      return;
+    }
     addItem({ query, label: query, quantity: 1 });
   };
 
   const addProduct = (product: Product) => {
     if (!hasProductPrice(product)) return;
-    addItem({
+    const selected: AgentItem = {
       query: product.name,
       label: product.name,
       product_id: product.id,
       image_url: product.image_url,
       brand: product.brand,
       quantity: 1,
-    });
+    };
+    if (resolveTarget) {
+      setItems((prev) =>
+        uniqueItems(prev.map((item) => (itemKey(item) === resolveTarget ? selected : item)))
+      );
+      setManualItem("");
+      setResolveTarget(null);
+      setSuggestions([]);
+      setResult(null);
+      setListMessage(`Prodotto scelto: ${product.name}.`);
+      return;
+    }
+    addItem(selected);
+  };
+
+  const startResolveItem = (item: AgentItem) => {
+    setResolveTarget(itemKey(item));
+    setManualItem(item.query);
+    setSuggestions([]);
   };
 
   const removeItem = (key: string) => {
     setItems((prev) => prev.filter((x) => itemKey(x) !== key));
+    if (resolveTarget === key) {
+      setResolveTarget(null);
+      setManualItem("");
+      setSuggestions([]);
+    }
     setResult(null);
   };
 
@@ -426,7 +470,16 @@ export default function AgentePage() {
                 </span>
               )}
               <span className="truncate max-w-[190px]">{it.label || it.query}</span>
-              {it.product_id && <span className="text-[10px] text-primary font-bold">scelto</span>}
+              {it.product_id ? (
+                <span className="text-[10px] text-primary font-bold">scelto</span>
+              ) : (
+                <button
+                  onClick={() => startResolveItem(it)}
+                  className="text-[10px] text-primary font-bold hover:underline"
+                >
+                  scegli
+                </button>
+              )}
               <button
                 onClick={() => removeItem(itemKey(it))}
                 aria-label={`Rimuovi ${it.label || it.query}`}
@@ -443,12 +496,12 @@ export default function AgentePage() {
             <input
               value={manualItem}
               onChange={(e) => setManualItem(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addManualItem()}
+              onKeyDown={(e) => e.key === "Enter" && useManualAsGeneric()}
               className="flex-1 border-2 border-stone-200 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
-              placeholder="Aggiungi prodotto, es. latte"
+              placeholder={resolveTarget ? `Scegli marca e formato per ${manualItem || "prodotto"}` : "Aggiungi prodotto, es. latte"}
             />
             <button
-              onClick={addManualItem}
+              onClick={useManualAsGeneric}
               className="w-11 rounded-xl bg-stone-900 text-white grid place-items-center"
               aria-label="Aggiungi prodotto"
             >
@@ -459,7 +512,7 @@ export default function AgentePage() {
           {manualItem.trim().length >= 2 && (searching || suggestions.length > 0) && (
             <div className="bg-white border border-stone-200 rounded-xl shadow-float overflow-hidden max-h-[56vh] overflow-y-auto">
               <p className="px-4 py-2 text-[12px] font-medium text-primary bg-primary-50 border-b border-primary/10">
-                Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano.
+                {resolveTarget ? `Scegli quale ${manualItem.trim()} vuoi: marca, formato e prezzo reale.` : "Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano."}
               </p>
               {searching && suggestions.length === 0 && (
                 <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti...</p>
@@ -512,7 +565,7 @@ export default function AgentePage() {
                 );
               })}
               <button
-                onClick={addManualItem}
+                onClick={useManualAsGeneric}
                 className="w-full px-3 py-2 text-left text-[12px] text-stone-500 hover:bg-surface"
               >
                 + Usa "{manualItem.trim()}" come ricerca generica
