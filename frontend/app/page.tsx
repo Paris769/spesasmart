@@ -1,9 +1,8 @@
 "use client";
-import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { searchProducts, getProductPrices, Product } from "@/lib/api";
-import { RETAIL_SERVICE_CONFIG, minSpendLabel, serviceLabel } from "@/lib/retailServices";
+import { searchProducts, getProductPrices, Product, PriceResult } from "@/lib/api";
+import { RETAIL_SERVICE_CONFIG } from "@/lib/retailServices";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
 import PriceCard from "@/components/ui/PriceCard";
@@ -17,20 +16,15 @@ import {
   ShoppingCart,
   PackageOpen,
   MapPin,
-  Bot,
-  Barcode,
-  ListChecks,
-  Truck,
-  Store,
-  Handshake,
-  Sparkles,
-  ArrowRight,
-  ShieldCheck,
-  Clock,
-  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 
-const QUICK_SEARCHES = ["latte", "tonno rio", "caffe", "pasta", "uova", "acqua"];
+function formatEur(value?: number | null) {
+  return typeof value === "number" ? `EUR ${value.toFixed(2)}` : "prezzo non disponibile";
+}
+
+const QUICK_SEARCHES = ["pasta barilla", "latte parmalat", "tonno rio mare", "caffe", "uova", "acqua"];
+const SEARCH_FALLBACK_LOCATION = { lat: 45.4642, lng: 9.19, label: "Milano" };
 
 function serviceSummary() {
   const delivery = RETAIL_SERVICE_CONFIG.filter((c) => c.services.includes("delivery")).length;
@@ -39,207 +33,220 @@ function serviceSummary() {
   return { delivery, pickup, delegated };
 }
 
+function hasProductPrice(p: Product) {
+  return p.min_price != null && (p.price_store_count ?? 0) > 0;
+}
+
+function freshnessLabel(value?: string | null) {
+  if (!value) return null;
+  const hours = Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000);
+  if (hours < 1) return "aggiornato ora";
+  if (hours < 24) return `${hours}h fa`;
+  return `${Math.floor(hours / 24)}g fa`;
+}
+
 function SmartHome({ onQuickSearch }: { onQuickSearch: (q: string) => void }) {
+  const [draft, setDraft] = useState("pasta barilla");
   const summary = serviceSummary();
-  const highlightedChains = RETAIL_SERVICE_CONFIG.slice(0, 6);
-  const primaryTasks = [
-    { icon: Bot, label: "Spesa settimanale", detail: "Lista completa e piano pronto", href: "/agente" },
-    { icon: Search, label: "Confronta un prezzo", detail: "Risultati con fonte e disponibilita", action: () => onQuickSearch("tonno rio") },
-    { icon: Truck, label: "Consegna o ritiro", detail: "Minimi e servizi prima del checkout", href: "/agente" },
-  ];
+
+  const submit = (event?: { preventDefault: () => void }) => {
+    event?.preventDefault();
+    const q = draft.trim() || "pasta barilla";
+    onQuickSearch(q);
+  };
 
   return (
-    <div className="flex flex-col gap-4">
-      <section className="rounded-card border border-primary/20 bg-white shadow-card overflow-hidden">
-        <div className="bg-hero-grad text-white p-4 relative overflow-hidden">
-          <div className="absolute inset-0 bg-mesh opacity-60" aria-hidden />
-          <div className="relative flex items-start gap-3">
-            <div className="w-11 h-11 rounded-xl bg-white/20 grid place-items-center shrink-0">
-              <Sparkles size={22} />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-xl font-extrabold leading-tight">La spesa migliore, prima di aprire il carrello</h1>
-              <p className="text-sm text-white/85 mt-1">
-                Genera la lista, confronta prezzi reali e scegli consegna, ritiro o ritiro tramite incaricato.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Link
-                  href="/agente"
-                  className="inline-flex items-center gap-2 rounded-xl bg-white text-primary px-3 py-2 text-sm font-bold active:scale-[0.99] transition"
-                >
-                  <Bot size={16} /> Fai la spesa con l'agente
-                </Link>
-                <button
-                  onClick={() => onQuickSearch("latte")}
-                  className="inline-flex items-center gap-2 rounded-xl bg-white/15 border border-white/25 text-white px-3 py-2 text-sm font-bold active:scale-[0.99] transition"
-                >
-                  <Search size={16} /> Cerca un prodotto
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 grid gap-2 md:grid-cols-3 border-b border-stone-100">
-          {primaryTasks.map((task) => {
-            const Icon = task.icon;
-            const content = (
-              <>
-                <Icon size={19} className="text-primary shrink-0" />
-                <span className="min-w-0">
-                  <span className="block text-sm font-bold text-deep">{task.label}</span>
-                  <span className="block text-[12px] text-stone-500">{task.detail}</span>
-                </span>
-              </>
-            );
-            return task.href ? (
-              <Link
-                key={task.label}
-                href={task.href}
-                className="rounded-btn border border-primary/25 bg-primary-50 p-3 flex items-center gap-3 active:scale-[0.99] transition"
-              >
-                {content}
-              </Link>
-            ) : (
-              <button
-                key={task.label}
-                onClick={task.action}
-                className="rounded-btn border border-stone-200 bg-white p-3 flex items-center gap-3 text-left active:scale-[0.99] transition"
-              >
-                {content}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="p-4 grid gap-2 sm:grid-cols-3">
-          <Link
-            href="/agente"
-            className="rounded-btn border border-primary/30 bg-primary-50 p-3 flex items-center gap-3 active:scale-[0.99] transition"
-          >
-            <Bot size={20} className="text-primary shrink-0" />
-            <span className="min-w-0">
-              <span className="block text-sm font-bold text-deep">Agente spesa</span>
-              <span className="block text-[12px] text-stone-500">Lista, piano e carrello guidato</span>
-            </span>
-          </Link>
-          <button
-            onClick={() => onQuickSearch("latte")}
-            className="rounded-btn border border-stone-200 bg-white p-3 flex items-center gap-3 text-left active:scale-[0.99] transition"
-          >
-            <Search size={20} className="text-primary shrink-0" />
-            <span className="min-w-0">
-              <span className="block text-sm font-bold text-deep">Confronta prezzo</span>
-              <span className="block text-[12px] text-stone-500">Trova il prodotto piu conveniente</span>
-            </span>
-          </button>
-          <Link
-            href="/scanner"
-            className="rounded-btn border border-stone-200 bg-white p-3 flex items-center gap-3 active:scale-[0.99] transition"
-          >
-            <Barcode size={20} className="text-primary shrink-0" />
-            <span className="min-w-0">
-              <span className="block text-sm font-bold text-deep">Scanner</span>
-              <span className="block text-[12px] text-stone-500">Barcode, scontrini e verifica prezzi</span>
-            </span>
-          </Link>
-        </div>
-      </section>
-
-      <section className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-card border border-stone-200 bg-white p-4 shadow-card">
-          <Truck size={19} className="text-blue-600" />
-          <p className="mt-2 text-sm font-bold text-deep">Consegna a casa</p>
-          <p className="text-[12px] text-stone-500">{summary.delivery} catene configurate, minimi mostrati prima del checkout.</p>
-        </div>
-        <div className="rounded-card border border-stone-200 bg-white p-4 shadow-card">
-          <Store size={19} className="text-primary" />
-          <p className="mt-2 text-sm font-bold text-deep">Ritiro in negozio</p>
-          <p className="text-[12px] text-stone-500">{summary.pickup} catene con ritiro o verifica punto vendita.</p>
-        </div>
-        <div className="rounded-card border border-stone-200 bg-white p-4 shadow-card">
-          <Handshake size={19} className="text-accent" />
-          <p className="mt-2 text-sm font-bold text-deep">Ritiro con incaricato</p>
-          <p className="text-[12px] text-stone-500">{summary.delegated} catene predisposte per delega/servizio esterno dove consentito.</p>
-        </div>
-      </section>
-
-      <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card">
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="flex items-start gap-2">
-            <CheckCircle2 size={17} className="text-primary shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-bold text-deep">Risultati piu affidabili</p>
-              <p className="text-[12px] text-stone-500">Disponibilita e prezzi anomali vengono evidenziati o esclusi.</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <Clock size={17} className="text-primary shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-bold text-deep">Dati da verificare</p>
-              <p className="text-[12px] text-stone-500">Ogni prezzo rimanda al sito ufficiale per conferma finale.</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <ShieldCheck size={17} className="text-primary shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-bold text-deep">Ordine sotto controllo</p>
-              <p className="text-[12px] text-stone-500">Login, pagamento e invio ordine restano sempre confermati da te.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2">
+    <section className="rounded-card border border-primary/20 bg-white shadow-card overflow-hidden">
+      <div className="p-4 sm:p-5 bg-hero-grad text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-mesh opacity-55" aria-hidden />
+        <div className="relative flex flex-col gap-4">
           <div>
-            <p className="text-sm font-bold text-deep">Prova subito</p>
-            <p className="text-xs text-stone-400">Ricerche utili per controllare match e prezzi reali.</p>
-          </div>
-          <ListChecks size={18} className="text-primary" />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {QUICK_SEARCHES.map((q) => (
-            <button
-              key={q}
-              onClick={() => onQuickSearch(q)}
-              className="rounded-pill border border-stone-200 bg-surface px-3 py-1.5 text-sm font-medium text-stone-700 hover:border-primary hover:text-primary active:scale-[0.98] transition"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
-        <div className="flex items-start gap-2">
-          <ShieldCheck size={18} className="text-primary shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-bold text-deep">Minimi e servizi per catena</p>
-            <p className="text-xs text-stone-500">
-              I minimi possono cambiare per CAP, negozio, slot e promo: SpesaSmart li mostra come guida operativa e li fa confermare sul sito ufficiale.
+            <p className="text-[12px] font-bold uppercase tracking-wide text-white/75">SpesaSmart confronta i supermercati</p>
+            <h1 className="mt-1 text-2xl sm:text-3xl font-extrabold leading-tight">Fai la spesa risparmiando</h1>
+            <p className="mt-2 text-sm sm:text-base text-white/86 max-w-2xl">
+              Scrivi un prodotto e scopri subito il prezzo migliore, il supermercato dove conviene e gli altri prezzi disponibili.
             </p>
           </div>
+
+          <form onSubmit={submit} className="rounded-2xl bg-white p-2 shadow-float flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Search size={19} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                className="w-full h-12 rounded-xl border border-stone-200 pl-10 pr-3 text-base text-deep outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                placeholder="Cerca un prodotto, es. pasta barilla"
+              />
+            </div>
+            <button type="submit" className="h-12 rounded-xl bg-primary px-4 text-sm font-extrabold text-white active:scale-[0.99] transition">
+              Cerca prezzo migliore
+            </button>
+          </form>
+
+          <div className="flex flex-wrap gap-2 text-sm">
+            <span className="text-white/75">Prova:</span>
+            {QUICK_SEARCHES.slice(0, 3).map((q) => (
+              <button
+                key={q}
+                onClick={() => onQuickSearch(q)}
+                className="rounded-pill bg-white/14 border border-white/20 px-3 py-1 font-semibold text-white active:scale-[0.98] transition"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="grid gap-2 md:grid-cols-2">
-          {highlightedChains.map((chain) => (
-            <div key={chain.chainSlug} className="rounded-btn border border-stone-200 bg-surface p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-deep">{chain.chainName}</p>
-                <span className="text-[11px] text-stone-500">{chain.services.map(serviceLabel).join(" / ")}</span>
+      </div>
+
+      <div className="grid gap-0 border-t border-stone-100 md:grid-cols-3">
+        <div className="p-4 border-b md:border-b-0 md:border-r border-stone-100">
+          <p className="text-sm font-bold text-deep">Prezzo migliore subito</p>
+          <p className="text-[12px] text-stone-500 mt-1">Nei risultati vedi prezzo e supermercato senza aprire la scheda.</p>
+        </div>
+        <div className="p-4 border-b md:border-b-0 md:border-r border-stone-100">
+          <p className="text-sm font-bold text-deep">Tutti gli shop al passaggio</p>
+          <p className="text-[12px] text-stone-500 mt-1">Passa sul risultato per vedere prezzi, disponibilita e aggiornamento.</p>
+        </div>
+        <div className="p-4">
+          <p className="text-sm font-bold text-deep">Consegna e ritiro dopo</p>
+          <p className="text-[12px] text-stone-500 mt-1">{summary.delivery} catene con consegna, {summary.pickup} con ritiro, {summary.delegated} predisposte per incaricato.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProductPricePopover({ prices, loading, fallbackArea }: { prices?: PriceResult[]; loading: boolean; fallbackArea: boolean }) {
+  return (
+    <div className="absolute right-2 top-[calc(100%-6px)] z-30 w-[min(360px,calc(100vw-2rem))] rounded-xl border border-stone-200 bg-white shadow-float p-3 text-left">
+      <div className="flex items-start justify-between gap-2 border-b border-stone-100 pb-2">
+        <div>
+          <p className="text-sm font-bold text-deep">Prezzi nei supermercati</p>
+          <p className="text-[11px] text-stone-400">{fallbackArea ? "Area: Milano se la posizione non e attiva" : "Area: posizione/raggio selezionati"}</p>
+        </div>
+      </div>
+      {loading && <p className="py-3 text-sm text-stone-500">Carico prezzi e disponibilita...</p>}
+      {!loading && prices && prices.length === 0 && (
+        <p className="py-3 text-sm text-stone-500">Nessun prezzo dettagliato disponibile ora.</p>
+      )}
+      {!loading && prices && prices.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+          {prices.slice(0, 10).map((price, index) => (
+            <div key={`${price.store_id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg bg-surface px-2.5 py-2">
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold text-deep truncate">{price.chain_name}</p>
+                <p className={`text-[10px] ${price.in_stock === false ? "text-red-600" : "text-stone-400"}`}>
+                  {price.in_stock === false ? "non disponibile" : "disponibile"}
+                  {freshnessLabel(price.scraped_at) ? ` - ${freshnessLabel(price.scraped_at)}` : ""}
+                </p>
               </div>
-              <p className="mt-1 text-[12px] text-stone-600">
-                Consegna {minSpendLabel(chain.deliveryMin)} - Ritiro {minSpendLabel(chain.pickupMin)}
+              <p className={`text-sm font-extrabold tnum shrink-0 ${price.in_stock === false ? "text-stone-400" : "text-primary"}`}>
+                {formatEur(price.price)}
               </p>
-              <p className="mt-1 text-[11px] text-stone-400">{chain.pickupDelegate.label}</p>
             </div>
           ))}
         </div>
-        <Link href="/agente" className="inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 text-white px-4 py-2.5 text-sm font-bold active:scale-[0.99] transition">
-          Prepara lista con servizi e minimi <ArrowRight size={16} />
-        </Link>
-      </section>
+      )}
+      <p className="mt-2 text-[10px] text-stone-400">Non disponibile = presente nel catalogo ma non acquistabile ora.</p>
     </div>
+  );
+}
+
+function ProductResultRow({
+  product,
+  location,
+  radiusKm,
+  searchArea,
+  onOpen,
+}: {
+  product: Product;
+  location?: { lat: number; lng: number } | null;
+  radiusKm: number;
+  searchArea?: [number, number][] | null;
+  onOpen: (product: Product) => void;
+}) {
+  const [inspect, setInspect] = useState(false);
+  const hasPrice = hasProductPrice(product);
+  const effectiveLocation = location ?? SEARCH_FALLBACK_LOCATION;
+  const bestChain = product.best_price_chain_name || product.best_price_store_name || "supermercato disponibile";
+  const unavailableBest = product.best_price_in_stock === false;
+  const updated = freshnessLabel(product.best_price_scraped_at);
+
+  const { data: previewPrices, isFetching } = useQuery({
+    queryKey: ["price-preview", product.id, effectiveLocation.lat, effectiveLocation.lng, radiusKm, searchArea],
+    queryFn: () => getProductPrices(product.id, effectiveLocation.lat, effectiveLocation.lng, radiusKm, searchArea),
+    enabled: inspect && hasPrice,
+    staleTime: 5 * 60_000,
+  });
+
+  return (
+    <li
+      className="relative"
+      onMouseEnter={() => setInspect(true)}
+      onMouseLeave={() => setInspect(false)}
+      onFocus={() => setInspect(true)}
+      onBlur={() => setInspect(false)}
+    >
+      <div
+        role="button"
+        tabIndex={hasPrice ? 0 : -1}
+        onClick={() => hasPrice && onOpen(product)}
+        onKeyDown={(event) => {
+          if (hasPrice && (event.key === "Enter" || event.key === " ")) onOpen(product);
+        }}
+        className={`w-full text-left px-4 py-3 flex items-center gap-3 transition ${
+          hasPrice ? "hover:bg-surface active:bg-stone-100 cursor-pointer" : "cursor-not-allowed opacity-55"
+        }`}
+      >
+        {product.image_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={product.image_url} alt={product.name} className="w-12 h-12 object-contain rounded-lg shrink-0 bg-white border border-stone-100" />
+        ) : (
+          <div className="w-12 h-12 rounded-lg shrink-0 bg-stone-100 grid place-items-center text-stone-300">
+            <ShoppingCart size={18} />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-stone-900 text-sm leading-snug line-clamp-2">{product.name}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+            {product.brand && <span className="text-stone-400">{product.brand}</span>}
+            {unavailableBest && (
+              <span className="inline-flex items-center gap-1 rounded-pill bg-red-50 px-2 py-0.5 font-semibold text-red-700">
+                <AlertTriangle size={10} /> miglior prezzo non disponibile
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="text-right shrink-0 min-w-[112px]">
+          {hasPrice ? (
+            <>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-stone-400">Prezzo migliore</p>
+              <p className="text-lg font-extrabold text-primary tnum leading-tight">{formatEur(Number(product.min_price))}</p>
+              <p className="text-[11px] font-semibold text-deep truncate max-w-[130px]">{bestChain}</p>
+              {product.best_price_per_unit != null && (
+                <p className="text-[10px] text-stone-500 tnum">{formatEur(Number(product.best_price_per_unit))}/unita</p>
+              )}
+              <p className="text-[10px] text-stone-400">{product.price_store_count} shop{updated ? ` - ${updated}` : ""}</p>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setInspect((value) => !value);
+                }}
+                className="mt-1 rounded-pill border border-primary/20 bg-primary-50 px-2 py-0.5 text-[10px] font-bold text-primary md:hidden"
+              >
+                Mostra shop
+              </button>
+            </>
+          ) : (
+            <p className="text-[11px] font-medium text-stone-400">nessun prezzo</p>
+          )}
+        </div>
+      </div>
+      {inspect && hasPrice && (
+        <ProductPricePopover prices={previewPrices} loading={isFetching} fallbackArea={!location} />
+      )}
+    </li>
   );
 }
 
@@ -258,12 +265,19 @@ export default function HomePage() {
     return () => clearTimeout(t);
   }, [query, selectedProduct]);
 
-  const { data: products, isFetching: searching } = useQuery({
+  const { data: products, isFetching: searching, isError: searchError, refetch: retrySearch } = useQuery({
     queryKey: ["search", debouncedQuery, location, radiusKm, searchArea],
     queryFn: () =>
-      searchProducts(debouncedQuery, location?.lat, location?.lng, radiusKm, searchArea),
+      searchProducts(
+        debouncedQuery,
+        (location ?? SEARCH_FALLBACK_LOCATION).lat,
+        (location ?? SEARCH_FALLBACK_LOCATION).lng,
+        radiusKm,
+        searchArea
+      ),
     enabled: debouncedQuery.length >= 2 && !selectedProduct,
     staleTime: 30_000,
+    retry: 1,
   });
 
   const { data: prices, isFetching: loadingPrices } = useQuery({
@@ -308,17 +322,17 @@ export default function HomePage() {
     resetTrail(q);
   };
 
-  const hasProductPrice = (p: Product) =>
-    p.min_price != null && (p.price_store_count ?? 0) > 0;
-
   const canGoBack = trailPos >= 0;
   const canGoForward = trailPos < trail.length - 1;
   const showSmartHome = !query && !selectedProduct;
 
   return (
     <div className="flex flex-col gap-4">
+      {showSmartHome && <SmartHome onQuickSearch={startSearch} />}
+
       <LocationBar />
 
+      {!showSmartHome && (
       <div className="flex items-stretch gap-2">
         <button
           onClick={() => applyPos(trailPos - 1)}
@@ -367,8 +381,7 @@ export default function HomePage() {
           )}
         </div>
       </div>
-
-      {showSmartHome && <SmartHome onQuickSearch={startSearch} />}
+      )}
 
       {!selectedProduct && searching && debouncedQuery.length >= 2 && (
         <div className="flex flex-col gap-2">
@@ -379,61 +392,35 @@ export default function HomePage() {
         </div>
       )}
 
+      {!selectedProduct && !searching && searchError && debouncedQuery.length >= 2 && (
+        <div className="rounded-card border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex flex-col gap-2">
+          <p className="font-bold">Non riesco a recuperare i prezzi ora</p>
+          <p>C'e stato un problema temporaneo nel confronto dei supermercati. Riprova o cerca un nome piu semplice.</p>
+          <button
+            onClick={() => retrySearch()}
+            className="self-start rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white active:scale-[0.99] transition"
+          >
+            Riprova
+          </button>
+        </div>
+      )}
+
       {!selectedProduct && !searching && products && products.length > 0 && (
         <div>
           <p className="text-xs text-stone-400 mb-1.5 px-1">
             {products.length} prodotti - ordinati dando priorita a prezzo disponibile e pertinenza
           </p>
           <ul className="bg-white border border-stone-200 rounded-card shadow-card divide-y divide-stone-100 overflow-y-auto max-h-[62vh]">
-            {products.map((p) => {
-              const hasPrice = hasProductPrice(p);
-              return (
-                <li key={p.id}>
-                  <button
-                    onClick={() => hasPrice && openProduct(p)}
-                    disabled={!hasPrice}
-                    className={`w-full text-left px-4 py-3 flex items-center gap-3 transition ${
-                      hasPrice
-                        ? "hover:bg-surface active:bg-stone-100"
-                        : "cursor-not-allowed opacity-55"
-                    }`}
-                  >
-                    {p.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={p.image_url}
-                        alt={p.name}
-                        className="w-11 h-11 object-contain rounded-lg shrink-0 bg-white"
-                      />
-                    ) : (
-                      <div className="w-11 h-11 rounded-lg shrink-0 bg-stone-100 grid place-items-center text-stone-300">
-                        <ShoppingCart size={18} />
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-stone-900 text-sm leading-snug">{p.name}</p>
-                      {p.brand && <p className="text-xs text-stone-400">{p.brand}</p>}
-                    </div>
-                    <div className="text-right shrink-0">
-                      {hasPrice ? (
-                        <>
-                          <p className="text-sm font-bold text-primary tnum">
-                            EUR {Number(p.min_price).toFixed(2)}
-                          </p>
-                          <p className="text-[10px] text-stone-400">
-                            {p.price_store_count} negoz{p.price_store_count! > 1 ? "i" : "io"}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="text-[11px] font-medium text-stone-400">
-                          nessun prezzo
-                        </p>
-                      )}
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
+            {products.map((p) => (
+              <ProductResultRow
+                key={p.id}
+                product={p}
+                location={location}
+                radiusKm={radiusKm}
+                searchArea={searchArea}
+                onOpen={openProduct}
+              />
+            ))}
           </ul>
         </div>
       )}
