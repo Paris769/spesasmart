@@ -8,6 +8,8 @@ from app.db.session import get_db
 
 router = APIRouter(prefix="/products", tags=["products"])
 
+MIN_VALID_PRICE = 0.10
+
 
 def _strip_accents(value: str) -> str:
     return "".join(
@@ -173,6 +175,7 @@ async def search_products(
         "limit": limit,
         "candidate_limit": max(500, min(2000, limit * 50)),
         "offset": offset,
+        "min_valid_price": MIN_VALID_PRICE,
     }
 
     if category_id:
@@ -269,6 +272,7 @@ async def search_products(
                 JOIN stores s ON x.store_id = s.id
                 WHERE x.product_id = c.id
                   AND x.is_current = TRUE
+                  AND x.price >= :min_valid_price
                   AND s.is_active = TRUE
                   {price_geo}
             ) pr ON TRUE
@@ -321,7 +325,7 @@ async def get_product_prices(
     (se fornita) oppure il raggio. I negozi della spesa online sono
     sempre inclusi (consegna nazionale).
     """
-    params: dict = {"product_id": product_id, "lat": lat, "lng": lng}
+    params: dict = {"product_id": product_id, "lat": lat, "lng": lng, "min_valid_price": MIN_VALID_PRICE}
     area_wkt = _parse_area_wkt(area)
     if area_wkt:
         geo_filter = """s.external_id LIKE '%-online'
@@ -362,6 +366,7 @@ async def get_product_prices(
             JOIN chains c  ON s.chain_id  = c.id
             WHERE p.product_id = :product_id
               AND p.is_current  = TRUE
+              AND p.price >= :min_valid_price
               AND s.is_active   = TRUE
               AND ({geo_filter})
             ORDER BY p.in_stock DESC, p.price ASC
@@ -412,13 +417,13 @@ async def seo_sitemap(
             SELECT p.id::text AS id, p.name, p.updated_at,
                    count(DISTINCT pr.store_id) AS store_count
             FROM products p
-            JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
+            JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE AND pr.price >= :min_valid_price
             GROUP BY p.id, p.name, p.updated_at
             ORDER BY store_count DESC, p.updated_at DESC NULLS LAST
             LIMIT :limit
             """
         ),
-        {"limit": limit},
+        {"limit": limit, "min_valid_price": MIN_VALID_PRICE},
     )
     return [dict(r) for r in rows.mappings().all()]
 
@@ -434,7 +439,7 @@ async def get_product(
             "SELECT id::text, barcode, name, brand, image_url, description, "
             "unit, unit_quantity FROM products WHERE id = :id"
         ),
-        {"id": product_id},
+        {"id": product_id, "min_valid_price": MIN_VALID_PRICE},
     )
     row = prod.mappings().first()
     if not row:
@@ -449,11 +454,11 @@ async def get_product(
             FROM prices pr
             JOIN stores s ON pr.store_id = s.id
             JOIN chains c ON s.chain_id = c.id
-            WHERE pr.product_id = :id AND pr.is_current = TRUE AND s.is_active = TRUE
+            WHERE pr.product_id = :id AND pr.is_current = TRUE AND pr.price >= :min_valid_price AND s.is_active = TRUE
             ORDER BY c.id, pr.in_stock DESC, pr.price ASC
             """
         ),
-        {"id": product_id},
+        {"id": product_id, "min_valid_price": MIN_VALID_PRICE},
     )
     offer_list = sorted(
         [dict(o) for o in offers.mappings().all()],
