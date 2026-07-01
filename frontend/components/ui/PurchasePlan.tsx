@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { QuickOptimizeResult, outbound } from "@/lib/api";
+import { RETAIL_SERVICE_CONFIG, minSpendLabel } from "@/lib/retailServices";
 import {
   ArrowRight,
   Check,
@@ -12,9 +13,10 @@ import {
   Split,
   Store as StoreIcon,
   Truck,
+  Handshake,
 } from "lucide-react";
 
-type FulfillmentMode = "delivery" | "pickup";
+type FulfillmentMode = "delivery" | "pickup" | "courier_pickup";
 type StrategyMode = "single" | "multi";
 
 type PlanStore = {
@@ -80,11 +82,27 @@ function buildPlans(result: QuickOptimizeResult) {
 }
 
 function serviceLabel(service: FulfillmentMode) {
-  return service === "delivery" ? "consegna a casa" : "ritiro in negozio";
+  if (service === "delivery") return "consegna a casa";
+  if (service === "pickup") return "ritiro in negozio";
+  return "ritiro con incaricato";
+}
+
+function chainConfig(slug?: string | null) {
+  return RETAIL_SERVICE_CONFIG.find((c) => c.chainSlug === slug);
+}
+
+function serviceMinimum(store: PlanStore, service: FulfillmentMode) {
+  const cfg = chainConfig(store.chain_slug);
+  if (!cfg) return "minimo da confermare";
+  if (service === "delivery") return minSpendLabel(cfg.deliveryMin);
+  if (service === "pickup") return minSpendLabel(cfg.pickupMin);
+  return cfg.pickupDelegate.enabled ? "costo incaricato da stimare" : "non configurato";
 }
 
 function supportsService(store: PlanStore, service: FulfillmentMode) {
-  return service === "delivery" ? store.has_delivery !== false : store.has_click_collect !== false;
+  if (service === "delivery") return store.has_delivery !== false;
+  if (service === "pickup") return store.has_click_collect !== false;
+  return chainConfig(store.chain_slug)?.pickupDelegate.enabled === true;
 }
 
 export default function PurchasePlan({ result }: { result: QuickOptimizeResult }) {
@@ -142,7 +160,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
       </div>
 
       <div className="p-4 flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <button
             onClick={() => {
               setFulfillment("delivery");
@@ -170,6 +188,20 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
           >
             <PackageCheck size={18} className="text-primary shrink-0" />
             <span className="text-sm font-semibold">Ritiro in negozio</span>
+          </button>
+          <button
+            onClick={() => {
+              setFulfillment("courier_pickup");
+              setConfirmed(false);
+            }}
+            className={`text-left rounded-btn border p-3 flex items-center gap-2 transition active:scale-[0.99] ${
+              fulfillment === "courier_pickup"
+                ? "border-primary bg-primary-50 text-deep"
+                : "border-stone-200 bg-white text-stone-600"
+            }`}
+          >
+            <Handshake size={18} className="text-primary shrink-0" />
+            <span className="text-sm font-semibold">Ritiro incaricato</span>
           </button>
         </div>
 
@@ -213,7 +245,7 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
 
         {!fulfillment && (
           <p className="text-[12px] text-stone-500 bg-surface border border-stone-200 rounded-xl p-3">
-            Scegli prima se vuoi ricevere la spesa a casa o ritirarla in negozio.
+            Scegli prima consegna, ritiro in negozio o ritiro tramite incaricato.
           </p>
         )}
 
@@ -274,6 +306,12 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                   </div>
                   <span className="text-sm font-bold tnum">EUR {s.total.toFixed(2)}</span>
                 </div>
+                {fulfillment && (
+                  <p className="px-3 pb-2 -mt-1 text-[11px] text-stone-500 bg-surface">
+                    Soglia: {serviceMinimum(s, fulfillment)}
+                    {fulfillment === "courier_pickup" && " - incaricato esterno da prenotare separatamente"}
+                  </p>
+                )}
                 <ul className="divide-y divide-stone-100">
                   {s.items.map((it) => {
                     const isDone = done.has(it.key);
