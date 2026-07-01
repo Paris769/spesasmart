@@ -445,7 +445,7 @@ async def get_product(
             """
             SELECT DISTINCT ON (c.id)
                    c.name AS chain_name, c.slug AS chain_slug,
-                   pr.price, c.shop_url, pr.product_url
+                   pr.price, pr.in_stock, c.shop_url, pr.product_url
             FROM prices pr
             JOIN stores s ON pr.store_id = s.id
             JOIN chains c ON s.chain_id = c.id
@@ -456,9 +456,11 @@ async def get_product(
         {"id": product_id},
     )
     offer_list = sorted(
-        [dict(o) for o in offers.mappings().all()], key=lambda x: float(x["price"])
+        [dict(o) for o in offers.mappings().all()],
+        key=lambda x: (not bool(x.get("in_stock", True)), float(x["price"])),
     )
-    prices = [float(o["price"]) for o in offer_list]
+    available_prices = [float(o["price"]) for o in offer_list if o.get("in_stock") is not False]
+    prices = available_prices or [float(o["price"]) for o in offer_list]
     return {
         **dict(row),
         "min_price": min(prices) if prices else None,
