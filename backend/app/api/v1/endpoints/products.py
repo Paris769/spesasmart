@@ -259,22 +259,59 @@ async def search_products(
             )
             SELECT c.*,
                    pr.min_price,
-                   pr.store_count AS price_store_count
+                   pr.store_count AS price_store_count,
+                   pr.available_store_count,
+                   pr.best_price_chain_name,
+                   pr.best_price_chain_slug,
+                   pr.best_price_store_name,
+                   pr.best_price_in_stock,
+                   pr.best_price_scraped_at,
+                   pr.best_price_per_unit
             FROM candidates c
             JOIN LATERAL (
-                SELECT COALESCE(
-                           MIN(x.price) FILTER (WHERE x.in_stock IS TRUE),
-                           MIN(x.price)
-                       ) AS min_price,
-                       COUNT(DISTINCT x.store_id) AS store_count,
-                       COUNT(DISTINCT x.store_id) FILTER (WHERE x.in_stock IS TRUE) AS available_store_count
-                FROM prices x
-                JOIN stores s ON x.store_id = s.id
-                WHERE x.product_id = c.id
-                  AND x.is_current = TRUE
-                  AND x.price >= :min_valid_price
-                  AND s.is_active = TRUE
-                  {price_geo}
+                SELECT stats.min_price,
+                       stats.store_count,
+                       stats.available_store_count,
+                       best.chain_name AS best_price_chain_name,
+                       best.chain_slug AS best_price_chain_slug,
+                       best.store_name AS best_price_store_name,
+                       best.in_stock AS best_price_in_stock,
+                       best.scraped_at AS best_price_scraped_at,
+                       best.price_per_unit AS best_price_per_unit
+                FROM (
+                    SELECT COALESCE(
+                               MIN(x.price) FILTER (WHERE x.in_stock IS TRUE),
+                               MIN(x.price)
+                           ) AS min_price,
+                           COUNT(DISTINCT x.store_id) AS store_count,
+                           COUNT(DISTINCT x.store_id) FILTER (WHERE x.in_stock IS TRUE) AS available_store_count
+                    FROM prices x
+                    JOIN stores s ON x.store_id = s.id
+                    WHERE x.product_id = c.id
+                      AND x.is_current = TRUE
+                      AND x.price >= :min_valid_price
+                      AND s.is_active = TRUE
+                      {price_geo}
+                ) stats
+                LEFT JOIN LATERAL (
+                    SELECT x.price,
+                           x.in_stock,
+                           x.scraped_at,
+                           x.price_per_unit,
+                           s.name AS store_name,
+                           ch.name AS chain_name,
+                           ch.slug AS chain_slug
+                    FROM prices x
+                    JOIN stores s ON x.store_id = s.id
+                    JOIN chains ch ON s.chain_id = ch.id
+                    WHERE x.product_id = c.id
+                      AND x.is_current = TRUE
+                      AND x.price >= :min_valid_price
+                      AND s.is_active = TRUE
+                      {price_geo}
+                    ORDER BY x.in_stock DESC, x.price ASC
+                    LIMIT 1
+                ) best ON TRUE
             ) pr ON TRUE
             WHERE COALESCE(pr.store_count, 0) > 0
             ORDER BY
