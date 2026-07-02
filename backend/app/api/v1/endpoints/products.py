@@ -94,6 +94,46 @@ def _has_required_terms(q: str) -> bool:
     return _required_regex(q) != r"$^"
 
 
+def _preference_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if len(tokens) != 1:
+        return r"$^"
+    preferences = {
+        "pasta": [
+            r"spaghetti", r"penne", r"fusilli", r"rigatoni", r"farfalle", r"linguine",
+            r"sedani", r"mezze penne", r"pasta di semola", r"grano duro", r"semola di grano",
+        ],
+    }
+    parts = preferences.get(tokens[0], [])
+    if not parts:
+        return r"$^"
+    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")([^[:alnum:]_]|$)"
+
+
+def _deprioritize_regex(q: str) -> str:
+    tokens = _search_tokens(q)
+    if len(tokens) != 1:
+        return r"$^"
+    deprioritize = {
+        "pasta": [
+            r"raviol[[:alnum:]_]*", r"tortell[[:alnum:]_]*", r"cappellett[[:alnum:]_]*",
+            r"gnocch[[:alnum:]_]*", r"brise[[:alnum:]_]*", r"sfoglia", r"ripien[[:alnum:]_]*",
+            r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*",
+        ],
+    }
+    parts = deprioritize.get(tokens[0], [])
+    if not parts:
+        return r"$^"
+    return r"(^|[^[:alnum:]_])(" + "|".join(parts) + r")([^[:alnum:]_]|$)"
+
+
+def _has_preference_terms(q: str) -> bool:
+    return _preference_regex(q) != r"$^"
+
+
+def _has_deprioritize_terms(q: str) -> bool:
+    return _deprioritize_regex(q) != r"$^"
+
 def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
     """
     Converte un'area "lat,lng;lat,lng;…" (poligono disegnato sulla mappa)
@@ -171,6 +211,10 @@ async def search_products(
         "has_irrelevant": _has_irrelevant_terms(q),
         "required_re": _required_regex(q),
         "has_required": _has_required_terms(q),
+        "preference_re": _preference_regex(q),
+        "has_preference": _has_preference_terms(q),
+        "deprioritize_re": _deprioritize_regex(q),
+        "has_deprioritize": _has_deprioritize_terms(q),
         "allow_fuzzy": (not strict_match) and len(q_tokens) == 1,
         "limit": limit,
         "candidate_limit": max(500, min(2000, limit * 50)),
@@ -233,6 +277,11 @@ async def search_products(
                                 @@ plainto_tsquery('simple', :q_tsquery) THEN 6
                            ELSE 1
                        END AS word_rank,
+                       CASE
+                           WHEN :has_preference AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :preference_re THEN 2
+                           WHEN :has_deprioritize AND lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) ~ :deprioritize_re THEN -2
+                           ELSE 0
+                       END AS product_fit_rank,
                        word_similarity(:q, p.name) AS fuzzy_score,
                        ts_rank(
                            to_tsvector('simple', lower(p.name || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, ''))),
@@ -251,6 +300,7 @@ async def search_products(
                   )
                 ORDER BY
                     word_rank DESC,
+                    product_fit_rank DESC,
                     fuzzy_score DESC,
                     ts_score DESC,
                     similarity(p.name, :q) DESC,
@@ -316,6 +366,7 @@ async def search_products(
             WHERE COALESCE(pr.store_count, 0) > 0
             ORDER BY
                 c.word_rank DESC,
+                c.product_fit_rank DESC,
                 c.fuzzy_score DESC,
                 c.ts_score DESC,
                 pr.store_count DESC,
