@@ -141,6 +141,27 @@ function textItems(items: string[]): AgentItem[] {
   return uniqueItems(items.map((query) => ({ query: cleanItemQuery(query), label: cleanItemQuery(query), quantity: 1 })));
 }
 
+function stripRequestContext(value: string) {
+  let text = value.trim();
+  const colonIndex = text.indexOf(":");
+  if (colonIndex >= 0 && text.slice(colonIndex + 1).trim().length >= 2) {
+    text = text.slice(colonIndex + 1);
+  }
+
+  text = text
+    .replace(/^\s*(fammi|fai|prepara|crea|genera)?\s*(la\s+)?(spesa|lista)\s+(per|della|di)?\s*(la\s+)?(settimana|cena|pranzo|colazione|palestra)?\s*(per\s+\d+\s+persone?)?\s*(con\s+)?/i, "")
+    .replace(/^\s*(cena|pranzo|colazione|spesa\s+palestra)\s*(veloce|rapida|leggera)?\s*(per\s+\d+\s+persone?)?\s*(con\s+)?/i, "");
+
+  return cleanItemQuery(text);
+}
+
+function splitProductText(value: string) {
+  return stripRequestContext(value)
+    .split(/\n|,|;|\s+e\s+/i)
+    .map((x) => cleanItemQuery(x))
+    .filter((x) => x.length >= 2 && !/^(per\s+)?\d+\s+persone?$/i.test(x));
+}
+
 function normalizePrompt(text: string) {
   return text
     .toLowerCase()
@@ -155,10 +176,7 @@ function parseRequest(text: string): AgentItem[] {
   const clean = normalizePrompt(text);
   if (!clean) return [];
 
-  const explicit = text
-    .split(/\n|,|;/)
-    .map((x) => cleanItemQuery(x))
-    .filter((x) => x.length >= 2);
+  const explicit = splitProductText(text);
 
   if (explicit.length >= 2) return textItems(explicit);
 
@@ -180,11 +198,8 @@ function parseRequest(text: string): AgentItem[] {
 
   if (matched.length) return textItems(matched);
 
-  const fallback = text
-    .split(/\s+e\s+|\s+con\s+|,/)
-    .map((x) => x.trim())
-    .filter((x) => x.length >= 2 && !/^fammi\s+la\s+spesa/i.test(x));
-  return textItems(fallback.length ? fallback : [text]);
+  const fallback = splitProductText(text);
+  return textItems(fallback.length ? fallback : [stripRequestContext(text) || text]);
 }
 
 function hasProductPrice(p: Product) {
