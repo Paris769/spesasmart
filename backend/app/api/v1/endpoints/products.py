@@ -45,7 +45,7 @@ def _irrelevant_regex(q: str) -> str:
             r"tazzin[[:alnum:]_]*", r"bicchier[[:alnum:]_]*", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
             r"affogato", r"fruyo", r"grisb.*", r"zero grassi", r"vasetto", r"mousse", r"cookies",
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
-            r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
+            r"yomo", r"muller", r"mÃƒÂ¼ller", r"fage", r"sorbissimo", r"panna", r"gelateria",
             r"senza peccato", r"crema di", r"zuppalatte", r"colussi", r"cereali", r"orzo",
             r"biscott[[:alnum:]_]*", r"liquore", r"estratto", r"cacao", r"amaro",
         ],
@@ -54,12 +54,14 @@ def _irrelevant_regex(q: str) -> str:
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato", r"fiocco", r"fiocchi",
         ],
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
-        "pasta": [r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
+        "pasta": [r"bris.e", r"sfoglia", r"frolla", r"pizza", r"lievitat[[:alnum:]_]*", r"raviol[[:alnum:]_]*", r"tortell[[:alnum:]_]*", r"cappellett[[:alnum:]_]*", r"gnocch[[:alnum:]_]*", r"ripien[[:alnum:]_]*", r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*", r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
         "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*", r"shell", r"helix", r"detergente", r"doccia", r"eucerin"],
-        "riso": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pollo": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "petto": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "riso": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pollo": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "petto": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "tonno": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*", r"petfriends", r"surimi", r"granchio"],
+        "insalata": [r"russa", r"capricciosa", r"maionese", r"di riso", r"di pasta", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
         "mele": [r"aceto", r"succo", r"nettare", r"omogeneizzat[[:alnum:]_]*", r"confettura", r"composta", r"biscott[[:alnum:]_]*", r"grancereale", r"mirtilli", r"nocciol[[:alnum:]_]*"],
     }
     parts = exclusions.get(tokens[0], [])
@@ -103,6 +105,14 @@ def _preference_regex(q: str) -> str:
             r"spaghetti", r"penne", r"fusilli", r"rigatoni", r"farfalle", r"linguine",
             r"sedani", r"mezze penne", r"pasta di semola", r"grano duro", r"semola di grano",
         ],
+        "tonno": [
+            r"tonno", r"al naturale", r"olio", r"filett[[:alnum:]_]*", r"tranc[[:alnum:]_]*",
+            r"rio mare", r"nostromo", r"mareblu", r"as do mar",
+        ],
+        "insalata": [
+            r"lattuga", r"gentile", r"iceberg", r"misticanza", r"rucola", r"valeriana",
+            r"songino", r"belga", r"cuori", r"insalata mista",
+        ],
     }
     parts = preferences.get(tokens[0], [])
     if not parts:
@@ -120,6 +130,12 @@ def _deprioritize_regex(q: str) -> str:
             r"gnocch[[:alnum:]_]*", r"brise[[:alnum:]_]*", r"sfoglia", r"ripien[[:alnum:]_]*",
             r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*",
         ],
+        "tonno": [
+            r"gatto", r"gatti", r"cane", r"cani", r"pet[[:alnum:]_]*", r"surimi", r"granchio",
+        ],
+        "insalata": [
+            r"russa", r"capricciosa", r"maionese", r"di riso", r"di pasta", r"pollo", r"tonno",
+        ],
     }
     parts = deprioritize.get(tokens[0], [])
     if not parts:
@@ -136,8 +152,8 @@ def _has_deprioritize_terms(q: str) -> bool:
 
 def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
     """
-    Converte un'area "lat,lng;lat,lng;…" (poligono disegnato sulla mappa)
-    in un POLYGON WKT, oppure None se l'input non è valido.
+    Converte un'area "lat,lng;lat,lng;Ã¢â‚¬Â¦" (poligono disegnato sulla mappa)
+    in un POLYGON WKT, oppure None se l'input non ÃƒÂ¨ valido.
 
     I valori sono validati come float in range geografico: il WKT risultante
     viene passato come parametro bound a ST_GeomFromText (nessuna injection).
@@ -178,7 +194,7 @@ async def search_products(
     lat: Optional[float] = Query(None),
     lng: Optional[float] = Query(None),
     radius_km: float = Query(5.0, ge=0.5, le=50),
-    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
+    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;Ã¢â‚¬Â¦'"),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     db: AsyncSession = Depends(get_db),
@@ -378,7 +394,7 @@ async def search_products(
     rows = [dict(r) for r in result.mappings().all()]
 
     # Telemetria (fire-and-forget): alimenta gli agenti Product/Growth. Le
-    # ricerche a 0 risultati sono i gap più preziosi. Non deve mai rompere la
+    # ricerche a 0 risultati sono i gap piÃƒÂ¹ preziosi. Non deve mai rompere la
     # risposta all'utente.
     try:
         await db.execute(
@@ -402,7 +418,7 @@ async def get_product_prices(
     lat: float = Query(...),
     lng: float = Query(...),
     radius_km: float = Query(5.0, ge=0.5, le=50),
-    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
+    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;Ã¢â‚¬Â¦'"),
     db: AsyncSession = Depends(get_db),
 ):
     # I prezzi sono aggiornati dallo scraper poche volte al giorno: cache 5 min.
@@ -561,3 +577,4 @@ async def get_product(
         "store_count": len(offer_list),
         "offers": offer_list,
     }
+
