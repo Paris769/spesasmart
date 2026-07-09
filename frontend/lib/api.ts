@@ -9,7 +9,7 @@ const api = axios.create({
 });
 
 /** Instrada un link d'acquisto attraverso /go (tracking + affiliazione + allowlist).
- *  Se url è assente ritorna "#". */
+ *  Se url Ã¨ assente ritorna "#". */
 export const outbound = (
   url?: string | null,
   chain?: string | null,
@@ -32,7 +32,7 @@ api.interceptors.request.use((config) => {
 
 export default api;
 
-// ── Tipi ────────────────────────────────────────────────────────────────────
+// â”€â”€ Tipi â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface Store {
   id: string;
@@ -56,7 +56,7 @@ export interface Product {
   image_url: string | null;
   unit: string | null;
   unit_quantity: number | null;
-  /** Prezzo minimo corrente (entro il raggio se la posizione è attiva). */
+  /** Prezzo minimo corrente (entro il raggio se la posizione Ã¨ attiva). */
   min_price?: number | null;
   /** Numero di negozi con un prezzo corrente per questo prodotto. */
   price_store_count?: number | null;
@@ -69,6 +69,18 @@ export interface Product {
   best_price_in_stock?: boolean | null;
   best_price_scraped_at?: string | null;
   best_price_per_unit?: number | null;
+  /** Prezzo minimo per unita (EUR/kg o EUR/L) sui risultati di ricerca. */
+  min_price_per_unit?: number | null;
+}
+
+export interface PriceLocation {
+  store_id: string;
+  store_name: string;
+  address: string;
+  distance_km: number | null;
+  in_stock: boolean;
+  is_online: boolean;
+  price: number;
 }
 
 export interface PriceResult {
@@ -88,14 +100,35 @@ export interface PriceResult {
   has_click_collect: boolean;
   /** null per i negozi online (spesa nazionale, distanza non significativa). */
   distance_km: number | null;
-  /** true se è un negozio virtuale di spesa online (consegna nazionale). */
+  /** true se e un negozio virtuale di spesa online (consegna nazionale). */
   is_online: boolean;
+  /** Sedi della stessa catena aggregate nella vista prodotto. */
+  chain_locations?: PriceLocation[];
+  /** true se il prezzo non viene aggiornato da tempo: da verificare sul sito. */
+  stale?: boolean;
+}
+// â”€â”€ Copertura catene â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export interface ChainCoverage {
+  slug: string;
+  name: string;
+  products_with_current_price: number;
+  physical_stores: number;
+  has_online_shop: boolean;
+  last_scraped_at: string | null;
+  /** "full" = confronto completo, "promo" = solo offerte/volantino, "none" = nessun dato. */
+  tier: "full" | "promo" | "none";
 }
 
-// ── API calls ────────────────────────────────────────────────────────────────
+export const getChainsCoverage = (): Promise<ChainCoverage[]> =>
+  api
+    .get<{ chains: ChainCoverage[] }>("/stores/coverage")
+    .then((r) => r.data.chains || []);
 
-/** Codifica un poligono [[lat,lng],…] come "lat,lng;lat,lng;…" per la query.
- *  Ritorna undefined se l'area non è valida (< 3 punti). */
+// â”€â”€ API calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/** Codifica un poligono [[lat,lng],â€¦] come "lat,lng;lat,lng;â€¦" per la query.
+ *  Ritorna undefined se l'area non Ã¨ valida (< 3 punti). */
 export const encodeArea = (
   area?: [number, number][] | null
 ): string | undefined => {
@@ -156,7 +189,7 @@ export const optimizeList = (
     .post(`/lists/${listId}/optimize`, { lat, lng, radius_km: radiusKm })
     .then((r) => r.data);
 
-// ── Ottimizzatore lista "quick" (stateless, senza login) ─────────────────────
+// â”€â”€ Ottimizzatore lista "quick" (stateless, senza login) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface QuickStoreItem {
   query: string;
@@ -166,6 +199,11 @@ export interface QuickStoreItem {
   product_name: string;
   product_url: string | null;
   image_url?: string | null;
+  /** "exact" = prodotto ancorato dall'utente, "text" = match testuale automatico. */
+  match_type?: "exact" | "text";
+  matched_product_name?: string;
+  matched_product_id?: string;
+  price_per_unit?: number | null;
 }
 
 export interface QuickStore {
@@ -274,4 +312,131 @@ export const parseReceipt = (file: File): Promise<ReceiptResult> => {
     })
     .then((r) => r.data);
 };
+
+// â”€â”€ Agente: parsing prompt lato server (LLM) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export interface AgentParsedItem {
+  query: string;
+  quantity: number;
+}
+
+export interface AgentParseResult {
+  items: AgentParsedItem[];
+  /** "llm" quando la lista arriva dal modello lato server. */
+  source: string;
+}
+
+/** Trasforma un prompt libero in item {query, quantity} via LLM lato server.
+ *  Risponde 503 {"detail":"llm_unavailable"} se il modello non Ã¨ disponibile:
+ *  il chiamante deve avere un fallback locale. */
+export const parseAgentPrompt = (prompt: string): Promise<AgentParseResult> =>
+  api.post<AgentParseResult>("/agent/parse", { prompt }).then((r) => r.data);
+
+// â”€â”€ Avvisi di prezzo (watch) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export interface Watch {
+  id: string;
+  product_id: string;
+  email?: string;
+  threshold_price?: number | null;
+  product_name?: string | null;
+  created_at?: string | null;
+}
+
+export const createWatch = (
+  productId: string,
+  email: string,
+  thresholdPrice?: number | null
+): Promise<Watch> =>
+  api
+    .post<Watch>("/watches", {
+      product_id: productId,
+      email,
+      ...(thresholdPrice != null ? { threshold_price: thresholdPrice } : {}),
+    })
+    .then((r) => r.data);
+
+export const getWatches = (email: string): Promise<Watch[]> =>
+  api
+    .get<Watch[] | { watches: Watch[] }>("/watches", { params: { email } })
+    .then((r) => (Array.isArray(r.data) ? r.data : r.data?.watches || []));
+
+export const deleteWatch = (id: string, email: string) =>
+  api.delete(`/watches/${id}`, { params: { email } }).then((r) => r.data);
+
+// â”€â”€ Spesa abituale (liste ricorrenti con digest email) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export interface RecurringItemInput {
+  query: string;
+  quantity: number;
+  product_id?: string;
+}
+
+export interface RecurringItem {
+  id: string;
+  query: string;
+  quantity: number;
+  product_id: string | null;
+  product_name_resolved?: string | null;
+  image_url?: string | null;
+}
+
+export interface RecurringList {
+  id: string;
+  name: string;
+  last_digest_at?: string | null;
+  items: RecurringItem[];
+}
+
+export const createRecurringList = (
+  email: string,
+  name: string,
+  items: RecurringItemInput[]
+): Promise<RecurringList> =>
+  api
+    .post<RecurringList>("/recurring", { email, name, items })
+    .then((r) => r.data);
+
+export const getRecurringLists = (email: string): Promise<RecurringList[]> =>
+  api
+    .get<{ lists: RecurringList[] }>("/recurring", { params: { email } })
+    .then((r) => r.data.lists || []);
+
+export const updateRecurringList = (
+  id: string,
+  email: string,
+  name: string,
+  items: RecurringItemInput[]
+): Promise<RecurringList> =>
+  api
+    .put<RecurringList>(`/recurring/${id}`, { email, name, items })
+    .then((r) => r.data);
+
+export const deleteRecurringList = (id: string, email: string) =>
+  api.delete(`/recurring/${id}`, { params: { email } }).then((r) => r.data);
+
+// â”€â”€ Verifica offerte (promo check) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export type PromoVerdict =
+  | "true_promo"
+  | "weak_promo"
+  | "fake_promo"
+  | "insufficient_history";
+
+export interface PromoCheckRow {
+  store_id: string;
+  chain_name: string;
+  current_price: number;
+  median_60d: number | null;
+  discount_pct: number | null;
+  verdict: PromoVerdict;
+}
+
+export interface PromoCheckResult {
+  product_id: string;
+  checks: PromoCheckRow[];
+}
+
+export const getPromoCheck = (productId: string): Promise<PromoCheckResult> =>
+  api.get<PromoCheckResult>(`/promo/${productId}`).then((r) => r.data);
 
