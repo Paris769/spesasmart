@@ -1,11 +1,13 @@
 "use client";
-import { useState, useEffect } from "react";
+import Link from "next/link";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchProducts, getProductPrices, Product, PriceResult } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG } from "@/lib/retailServices";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
 import PriceCard from "@/components/ui/PriceCard";
+import ChainCoverageBanner from "@/components/ui/ChainCoverageBanner";
 import { PriceCardSkeletonList } from "@/components/ui/PriceCardSkeleton";
 import EmptyState from "@/components/ui/EmptyState";
 import {
@@ -17,6 +19,7 @@ import {
   PackageOpen,
   MapPin,
   AlertTriangle,
+  ListChecks,
 } from "lucide-react";
 
 function formatEur(value?: number | null) {
@@ -116,6 +119,29 @@ function SmartHome({ onQuickSearch }: { onQuickSearch: (q: string) => void }) {
   );
 }
 
+function RecurringCta() {
+  return (
+    <section className="rounded-card border border-stone-200 bg-white shadow-card p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <span className="w-10 h-10 rounded-xl bg-primary-50 text-primary grid place-items-center shrink-0">
+          <ListChecks size={20} />
+        </span>
+        <div>
+          <p className="text-sm font-extrabold text-deep">Trasforma il comparatore nella tua spesa abituale</p>
+          <p className="text-[12px] text-stone-500 mt-0.5 max-w-2xl">
+            Salva i prodotti che compri sempre: SpesaSmart li controlla nel tempo e prepara il piano piu conveniente quando ti serve.
+          </p>
+        </div>
+      </div>
+      <Link
+        href="/lista"
+        className="inline-flex h-10 items-center justify-center rounded-xl bg-stone-900 px-4 text-sm font-bold text-white active:scale-[0.99] transition"
+      >
+        Crea lista abituale
+      </Link>
+    </section>
+  );
+}
 function ProductPricePopover({ prices, loading, fallbackArea }: { prices?: PriceResult[]; loading: boolean; fallbackArea: boolean }) {
   return (
     <div className="absolute right-2 top-[calc(100%-6px)] z-30 w-[min(360px,calc(100vw-2rem))] rounded-xl border border-stone-200 bg-white shadow-float p-3 text-left">
@@ -250,6 +276,53 @@ function ProductResultRow({
   );
 }
 
+function groupPricesByChain(prices?: PriceResult[]): PriceResult[] {
+  if (!prices?.length) return [];
+  const groups = new Map<string, PriceResult>();
+
+  for (const price of prices) {
+    const key = price.chain_slug || price.chain_name;
+    const location = {
+      store_id: price.store_id,
+      store_name: price.is_online ? "Spesa online" : price.store_name,
+      address: price.address,
+      distance_km: price.distance_km,
+      in_stock: price.in_stock,
+      is_online: price.is_online,
+      price: price.price,
+    };
+    const current = groups.get(key);
+    if (!current) {
+      groups.set(key, { ...price, chain_locations: [location] });
+      continue;
+    }
+
+    const currentLocations = current.chain_locations ?? [];
+    const alreadyPresent = currentLocations.some((item) => item.store_id === location.store_id);
+    const chain_locations = alreadyPresent ? currentLocations : [...currentLocations, location];
+    const currentScore = (current.in_stock === false ? 1_000_000 : 0) + current.price;
+    const nextScore = (price.in_stock === false ? 1_000_000 : 0) + price.price;
+    const best = nextScore < currentScore ? price : current;
+
+    groups.set(key, {
+      ...best,
+      has_delivery: current.has_delivery || price.has_delivery,
+      has_click_collect: current.has_click_collect || price.has_click_collect,
+      chain_locations: chain_locations.sort((a, b) => {
+        if (a.in_stock !== b.in_stock) return a.in_stock === false ? 1 : -1;
+        if (a.distance_km == null && b.distance_km == null) return a.store_name.localeCompare(b.store_name);
+        if (a.distance_km == null) return 1;
+        if (b.distance_km == null) return -1;
+        return a.distance_km - b.distance_km;
+      }),
+    });
+  }
+
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.in_stock !== b.in_stock) return a.in_stock === false ? 1 : -1;
+    return a.price - b.price;
+  });
+}
 export default function HomePage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -286,6 +359,8 @@ export default function HomePage() {
       getProductPrices(selectedProduct!.id, location!.lat, location!.lng, radiusKm, searchArea),
     enabled: !!selectedProduct && !!location,
   });
+
+  const groupedPrices = useMemo(() => groupPricesByChain(prices), [prices]);
 
   const openProduct = (p: Product) => {
     setTrail((t) => [...t.slice(0, trailPos + 1), p]);
@@ -329,6 +404,8 @@ export default function HomePage() {
   return (
     <div className="flex flex-col gap-4">
       {showSmartHome && <SmartHome onQuickSearch={startSearch} />}
+      {showSmartHome && <RecurringCta />}
+      {showSmartHome && <ChainCoverageBanner />}
 
       <LocationBar />
 
@@ -460,7 +537,7 @@ export default function HomePage() {
 
           {loadingPrices && <PriceCardSkeletonList n={4} />}
 
-          {!loadingPrices && prices && prices.length === 0 && (
+          {!loadingPrices && groupedPrices.length === 0 && (
             <EmptyState
               Icon={MapPin}
               title="Nessun prezzo nei dintorni"
@@ -468,14 +545,14 @@ export default function HomePage() {
             />
           )}
 
-          {!loadingPrices && prices && prices.length > 0 && (() => {
-            const avg = prices.reduce((s, p) => s + p.price, 0) / prices.length;
-            const best = prices[0];
-            const worst = prices[prices.length - 1];
+          {!loadingPrices && groupedPrices.length > 0 && (() => {
+            const avg = groupedPrices.reduce((s, p) => s + p.price, 0) / groupedPrices.length;
+            const best = groupedPrices[0];
+            const worst = groupedPrices[groupedPrices.length - 1];
             const maxSave = worst.price - best.price;
             return (
               <>
-                {prices.length > 1 && maxSave > 0.01 && (
+                {groupedPrices.length > 1 && maxSave > 0.01 && (
                   <div className="relative overflow-hidden rounded-2xl bg-hero-grad text-white p-4 shadow-float">
                     <div className="absolute inset-0 bg-mesh" aria-hidden />
                     <div className="relative">
@@ -492,7 +569,7 @@ export default function HomePage() {
                 )}
 
                 <p className="text-sm text-stone-500">
-                  <strong className="text-deep">{prices.length}</strong> prezzi - spesa online e
+                  <strong className="text-deep">{groupedPrices.length}</strong> catene - {prices?.length ?? 0} sedi/prezzi - spesa online e
                   negozi entro {radiusKm} km
                 </p>
                 <p className="text-[11px] text-stone-400 -mt-1">
@@ -500,13 +577,14 @@ export default function HomePage() {
                   possono essere affiliati (ADV).
                 </p>
                 <div className="flex flex-col gap-3">
-                  {prices.map((p, i) => (
+                  {groupedPrices.map((p, i) => (
                     <PriceCard
-                      key={`${p.store_id}-${i}`}
+                      key={`${p.chain_slug}-${i}`}
                       result={p}
                       rank={i}
                       avgPrice={avg}
                       imageUrl={selectedProduct.image_url}
+                      unit={selectedProduct.unit}
                     />
                   ))}
                 </div>
