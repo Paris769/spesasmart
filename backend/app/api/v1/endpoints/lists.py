@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.freshness import fresh_price_sql
 from app.db.session import get_db
 
 router = APIRouter(prefix="/lists", tags=["lists"])
@@ -59,12 +60,12 @@ def _irrelevant_regex(q: str) -> str:
         "acqua": [r"bibita", r"energy drink", r"red bull", r"fruity", r"aromatizzat[[:alnum:]_]*", r"limone", r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
         "pasta": [r"bris.e", r"sfoglia", r"frolla", r"pizza", r"lievitat[[:alnum:]_]*", r"raviol[[:alnum:]_]*", r"tortell[[:alnum:]_]*", r"cappellett[[:alnum:]_]*", r"gnocch[[:alnum:]_]*", r"ripien[[:alnum:]_]*", r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*", r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
         "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*", r"shell", r"helix", r"detergente", r"doccia", r"eucerin"],
-        "riso": [r"aceto", r"salsa", r"chips", r"gallo.s chips", r"gallette", r"snack", r"barrett[[:alnum:]_]*", r"soffiato", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pollo": [r"saikebon", r"noodle[[:alnum:]_]*", r"noodles", r"instant", r"adoc", r"day by day", r"gattin[[:alnum:]_]*", r"gatto", r"gatti", r"pet food", r"wurstel", r"w.rstel", r"tacchino", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "petto": [r"saikebon", r"noodle[[:alnum:]_]*", r"noodles", r"instant", r"adoc", r"day by day", r"gattin[[:alnum:]_]*", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "tonno": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*", r"petfriends", r"surimi", r"granchio"],
-        "insalata": [r"russa", r"capricciosa", r"maionese", r"di riso", r"di pasta", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "riso": [r"aceto", r"salsa", r"chips", r"gallo.s chips", r"gallette", r"snack", r"barrett[[:alnum:]_]*", r"soffiato", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pollo": [r"saikebon", r"noodle[[:alnum:]_]*", r"noodles", r"instant", r"adoc", r"day by day", r"gattin[[:alnum:]_]*", r"gatto", r"gatti", r"pet food", r"wurstel", r"w.rstel", r"tacchino", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "petto": [r"saikebon", r"noodle[[:alnum:]_]*", r"noodles", r"instant", r"adoc", r"day by day", r"gattin[[:alnum:]_]*", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "tonno": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*", r"petfriends", r"surimi", r"granchio"],
+        "insalata": [r"russa", r"capricciosa", r"maionese", r"di riso", r"di pasta", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
         "mele": [r"aceto", r"salsa", r"succo", r"nettare", r"omogeneizzat[[:alnum:]_]*", r"confettura", r"composta", r"biscott[[:alnum:]_]*", r"grancereale", r"mirtilli", r"nocciol[[:alnum:]_]*"],
     }
     parts = exclusions.get(tokens[0], [])
@@ -215,9 +216,16 @@ async def remove_item(list_id: str, item_id: str, db: AsyncSession = Depends(get
     await db.commit()
 
 
+# Igiene dati (vedi core/freshness): nei piani di ottimizzazione entrano solo
+# prezzi non in quarantena e abbastanza freschi per la loro catena. Il
+# frammento SQL e i suoi bind param sono deterministici: costruiti una volta
+# a livello di modulo e riusati a ogni richiesta.
+_FRESH_PARAMS: dict = {}
+_FRESH_SQL = fresh_price_sql(_FRESH_PARAMS, price_alias="pr", chain_alias="c")
+
 # Query SQL: per ogni negozio, il prodotto piu' economico che matcha il testo.
 # DISTINCT ON (s.id) + ORDER BY s.id, price ASC = 1 riga/negozio = il piu' barato.
-_QUICK_ITEM_SQL = text("""
+_QUICK_ITEM_SQL = text(f"""
     WITH candidates AS MATERIALIZED (
         SELECT p.*,
                CASE
@@ -257,6 +265,7 @@ _QUICK_ITEM_SQL = text("""
                   )::numeric / 1000, 2)
         END                 AS distance_km,
         pr.price            AS price,
+        pr.price_per_unit   AS price_per_unit,
         pr.product_url      AS product_url,
         p.id::text          AS product_id,
         p.name              AS product_name,
@@ -266,6 +275,8 @@ _QUICK_ITEM_SQL = text("""
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
     JOIN chains c  ON s.chain_id = c.id
     WHERE pr.price >= :min_valid_price
+      AND NOT pr.quarantined
+      AND {_FRESH_SQL}
       AND (
             s.external_id LIKE '%-online'
             OR ST_DWithin(
@@ -280,7 +291,7 @@ _QUICK_ITEM_SQL = text("""
 """)
 
 # Variante per prodotto SCELTO: stesso prodotto (p.id) confrontato tra i negozi.
-_QUICK_ITEM_BY_ID_SQL = text("""
+_QUICK_ITEM_BY_ID_SQL = text(f"""
     SELECT DISTINCT ON (s.id)
         s.id::text          AS store_id,
         s.name              AS store_name,
@@ -297,6 +308,7 @@ _QUICK_ITEM_BY_ID_SQL = text("""
                   )::numeric / 1000, 2)
         END                 AS distance_km,
         pr.price            AS price,
+        pr.price_per_unit   AS price_per_unit,
         pr.product_url      AS product_url,
         p.id::text          AS product_id,
         p.name              AS product_name,
@@ -306,6 +318,8 @@ _QUICK_ITEM_BY_ID_SQL = text("""
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
     JOIN chains c  ON s.chain_id = c.id
     WHERE pr.price >= :min_valid_price
+      AND NOT pr.quarantined
+      AND {_FRESH_SQL}
       AND p.id = :pid
       AND (
             s.external_id LIKE '%-online'
@@ -355,12 +369,18 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             except (ValueError, AttributeError, TypeError):
                 pid_valid = None
 
+        # match_type: "exact" = confronto sul product_id scelto dal client;
+        # "text" = match testuale (campo additivo, il frontend lo legge opzionale).
+        match_type = "text"
         rows = []
         if pid_valid:
             rows = (await db.execute(_QUICK_ITEM_BY_ID_SQL, {
                 "pid": pid_valid,
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
+                **_FRESH_PARAMS,
             })).mappings().all()
+            if rows:
+                match_type = "exact"
 
         if not rows:
             ql = q.lower()
@@ -375,6 +395,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "q_lower": ql, "q_start": f"{ql} %",
                 "q_mid": f"% {ql} %", "q_end": f"% {ql}",
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
+                **_FRESH_PARAMS,
             })).mappings().all()
 
         if not rows:
@@ -387,6 +408,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         per_item_best.append({
             "query": q, "quantity": qty,
             "price": float(best_row["price"]),
+            "price_per_unit": float(best_row["price_per_unit"]) if best_row["price_per_unit"] is not None else None,
             "subtotal": round(float(best_row["price"]) * qty, 2),
             "store_id": best_row["store_id"],
             "chain_name": best_row["chain_name"],
@@ -397,6 +419,9 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             "has_click_collect": best_row["has_click_collect"],
             "product_url": best_row["product_url"],
             "product_name": best_row["product_name"],
+            "match_type": match_type,
+            "matched_product_id": best_row["product_id"],
+            "matched_product_name": best_row["product_name"],
         })
 
         for r in rows:
@@ -421,9 +446,13 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             st["items"].append({
                 "query": q, "quantity": qty,
                 "price": float(r["price"]), "subtotal": sub,
+                "price_per_unit": float(r["price_per_unit"]) if r["price_per_unit"] is not None else None,
                 "product_name": r["product_name"],
                 "product_url": r["product_url"],
                 "image_url": r["image_url"],
+                "match_type": match_type,
+                "matched_product_id": r["product_id"],
+                "matched_product_name": r["product_name"],
             })
 
     n_items = len(items)
@@ -489,12 +518,26 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
     if not items:
         raise HTTPException(status_code=400, detail="Nessun prodotto con ID nella lista")
 
-    product_ids = [str(i["product_id"]) for i in items]
-    quantities = {str(i["product_id"]): float(i["quantity"]) for i in items}
+    # Aggrega i duplicati per product_id (stessa voce ripetuta: le quantita'
+    # si sommano); tutti i conteggi a valle usano i prodotti DISTINTI.
+    quantities: dict[str, float] = {}
+    for i in items:
+        pid = str(i["product_id"])
+        quantities[pid] = quantities.get(pid, 0.0) + float(i["quantity"])
+    product_ids = list(quantities.keys())
 
-    # Prezzi per ogni prodotto nei negozi vicini
+    # Prezzi per ogni prodotto nei negozi vicini. Igiene dati: esclusi i
+    # prezzi in quarantena e quelli stantii per la loro catena.
+    opt_params: dict = {
+        "pids": product_ids,
+        "lat": body.lat,
+        "lng": body.lng,
+        "radius_m": body.radius_km * 1000,
+        "min_valid_price": MIN_VALID_PRICE,
+    }
+    fresh_opt = fresh_price_sql(opt_params, price_alias="p", chain_alias="c")
     prices_res = await db.execute(
-        text("""
+        text(f"""
             SELECT
                 p.product_id::text, p.price, p.price_per_unit,
                 s.id::text AS store_id, s.name AS store_name,
@@ -507,9 +550,11 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
             FROM prices p
             JOIN stores s ON p.store_id = s.id
             JOIN chains c ON s.chain_id = c.id
-            WHERE p.product_id = ANY(:pids::uuid[])
+            WHERE p.product_id = ANY(CAST(:pids AS uuid[]))
               AND p.is_current = TRUE
+              AND NOT p.quarantined
               AND p.price >= :min_valid_price
+              AND {fresh_opt}
               AND s.is_active  = TRUE
               AND ST_DWithin(
                     s.coordinates::geography,
@@ -518,13 +563,7 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
                   )
             ORDER BY p.price
         """),
-        {
-            "pids": product_ids,
-            "lat": body.lat,
-            "lng": body.lng,
-            "radius_m": body.radius_km * 1000,
-            "min_valid_price": MIN_VALID_PRICE,
-        },
+        opt_params,
     )
     all_prices = prices_res.mappings().all()
 
@@ -563,8 +602,11 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
                 entry["items"].append({
                     "product_id": pid,
                     "price": float(row["price"]),
+                    "price_per_unit": float(row["price_per_unit"]) if row["price_per_unit"] is not None else None,
                     "quantity": qty,
                     "subtotal": float(row["price"]) * qty,
+                    # gli item di /optimize hanno sempre un product_id reale
+                    "match_type": "exact",
                 })
 
     n_products = len(product_ids)
@@ -602,8 +644,10 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
         multi_store_assignment[sid]["items"].append({
             "product_id": pid,
             "price": float(row["price"]),
+            "price_per_unit": float(row["price_per_unit"]) if row["price_per_unit"] is not None else None,
             "quantity": qty,
             "subtotal": subtotal,
+            "match_type": "exact",
         })
 
     result = {

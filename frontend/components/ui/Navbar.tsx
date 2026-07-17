@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
-import { Bot, MapPin, ScanLine, Search } from "lucide-react";
+import { Bot, ListChecks, MapPin, ScanLine, Search } from "lucide-react";
 
 const links = [
   { href: "/", label: "Cerca", Icon: Search },
+  { href: "/lista", label: "Lista", Icon: ListChecks },
   { href: "/agente", label: "Agente", Icon: Bot },
   { href: "/mappa", label: "Mappa", Icon: MapPin },
   { href: "/scanner", label: "Scanner", Icon: ScanLine },
@@ -18,7 +19,7 @@ export default function BottomNav() {
       className="fixed bottom-0 inset-x-0 z-50 bg-white border-t border-stone-200 shadow-nav"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <div className="max-w-5xl mx-auto grid grid-cols-4 h-16">
+      <div className="max-w-5xl mx-auto grid grid-cols-5 h-16">
         {links.map(({ href, label, Icon }) => {
           const active = path === href;
           return (
@@ -49,4 +50,3 @@ export default function BottomNav() {
     </nav>
   );
 }
-

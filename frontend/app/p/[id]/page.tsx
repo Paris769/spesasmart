@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import PriceWatch from "@/components/ui/PriceWatch";
+import PromoCheck from "@/components/ui/PromoCheck";
 
 // Pagina prodotto SERVER-RENDERED e indicizzabile: chi cerca "prezzo <prodotto>"
 // su Google atterra qui. Genera meta tag + dati strutturati (schema.org Product
@@ -182,6 +184,11 @@ export default async function ProductPage({ params }: { params: { id: string } }
           </p>
         </section>
       )}
+
+      {/* Isole client: avviso di prezzo + verifica offerta (fallback grazioso
+          se le API non esistono ancora, il rendering server resta invariato). */}
+      <PriceWatch productId={p.id} productName={p.name} />
+      <PromoCheck productId={p.id} />
 
       <section className="rounded-card bg-hero-grad text-white p-5 relative overflow-hidden">
         <div className="absolute inset-0 bg-mesh" aria-hidden />

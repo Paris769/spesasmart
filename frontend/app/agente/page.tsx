@@ -6,7 +6,6 @@ import {
   Calculator,
   CheckCircle2,
   Clock,
-  Info,
   PackageSearch,
   Plus,
   Search,
@@ -19,7 +18,14 @@ import {
 } from "lucide-react";
 import LocationBar from "@/components/ui/LocationBar";
 import PurchasePlan from "@/components/ui/PurchasePlan";
-import { optimizeQuick, Product, QuickOptimizeResult, searchProducts } from "@/lib/api";
+import ChainCoverageBanner from "@/components/ui/ChainCoverageBanner";
+import {
+  optimizeQuick,
+  parseAgentPrompt,
+  Product,
+  QuickOptimizeResult,
+  searchProducts,
+} from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
 type AgentItem = {
@@ -213,6 +219,8 @@ function firstGenericItem(items: AgentItem[]) {
 export default function AgentePage() {
   const { location, radiusKm, setLocation } = useAppStore();
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
+  const [generating, setGenerating] = useState(false);
+  const [listSource, setListSource] = useState<"llm" | "rules" | null>(null);
   const [items, setItems] = useState<AgentItem[]>([]);
   const [manualItem, setManualItem] = useState("");
   const [resolveTarget, setResolveTarget] = useState<string | null>(null);
@@ -287,10 +295,10 @@ export default function AgentePage() {
     setListMessage(`${message} Ora scegli marca e formato per "${nextGeneric.query}".`);
   };
 
-  const generateItems = () => {
-    const generated = parseRequest(prompt);
+  const applyGeneratedItems = (generated: AgentItem[], source: "llm" | "rules") => {
     const firstGeneric = firstGenericItem(generated);
     setItems(generated);
+    setListSource(generated.length > 0 ? source : null);
     setResolveTarget(firstGeneric ? itemKey(firstGeneric) : null);
     setManualItem(firstGeneric?.query || "");
     setSuggestions([]);
@@ -299,9 +307,35 @@ export default function AgentePage() {
     setLoadingStage(null);
     setListMessage(
       generated.length > 0
-        ? `Lista generata: ${generated.length} prodotti. Scegli marca e formato per i prodotti ambigui.`
+        ? `${source === "llm" ? "Lista generata dall'AI" : "Lista generata da regole"}: ${generated.length} prodotti. Scegli marca e formato per i prodotti ambigui.`
         : "Non ho capito la richiesta: scrivi almeno un prodotto o una richiesta tipo spesa per la settimana."
     );
+  };
+
+  // Prova PRIMA il parsing lato server (LLM); se il servizio risponde 503
+  // (llm_unavailable) o fallisce, usa il parser locale a regole.
+  const generateItems = async () => {
+    if (generating) return;
+    setGenerating(true);
+    try {
+      const parsed = await parseAgentPrompt(prompt);
+      const generated = uniqueItems(
+        (parsed.items || []).map((it) => ({
+          query: it.query,
+          label: it.query,
+          quantity: it.quantity || 1,
+        }))
+      );
+      if (generated.length > 0) {
+        applyGeneratedItems(generated, "llm");
+        return;
+      }
+      applyGeneratedItems(parseRequest(prompt), "rules");
+    } catch {
+      applyGeneratedItems(parseRequest(prompt), "rules");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const addItem = (item: AgentItem) => {
@@ -454,15 +488,7 @@ export default function AgentePage() {
         })}
       </section>
 
-      <div className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 flex gap-2 text-xs text-amber-900">
-        <Info size={16} className="mt-0.5 shrink-0" />
-        <p>
-          SpesaSmart confronta le catene con dati disponibili: Carrefour, Conad,
-          Esselunga, Famila, Il Gigante, Iper, Coop/Ipercoop, Lidl, Eurospin,
-          Aldi, MD, Penny e Pam. Alcuni prezzi, negozi o offerte possono non
-          comparire per zona, prodotto, disponibilita online o aggiornamento dati.
-        </p>
-      </div>
+      <ChainCoverageBanner />
 
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
@@ -499,9 +525,11 @@ export default function AgentePage() {
         />
         <button
           onClick={generateItems}
-          className="inline-flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold active:scale-[0.99] transition"
+          disabled={generating}
+          className="inline-flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-60 active:scale-[0.99] transition"
         >
-          <WandSparkles size={17} /> {items.length ? "Rigenera lista" : "Genera lista"}
+          <WandSparkles size={17} />{" "}
+          {generating ? "Genero la lista..." : items.length ? "Rigenera lista" : "Genera lista"}
         </button>
         {listMessage && (
           <p className={`text-sm rounded-xl px-3 py-2 border ${
@@ -517,7 +545,20 @@ export default function AgentePage() {
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-bold text-deep">Lista proposta</p>
+            <p className="text-sm font-bold text-deep flex items-center gap-2 flex-wrap">
+              Lista proposta
+              {listSource && (
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-pill ${
+                    listSource === "llm"
+                      ? "bg-primary-50 text-primary border border-primary/20"
+                      : "bg-stone-100 text-stone-500 border border-stone-200"
+                  }`}
+                >
+                  {listSource === "llm" ? "generata dall'AI" : "generata da regole"}
+                </span>
+              )}
+            </p>
             <p className="text-xs text-stone-400">
               Scrivi un prodotto e scegli il riferimento reale quando compare.
             </p>

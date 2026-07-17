@@ -12,6 +12,12 @@ class ShoppingList(Base):
     user_id             = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     name                = Column(String(200), default="Lista spesa")
     optimization_result = Column(JSONB)
+    # Spesa abituale (Fase 2): liste ricorrenti ancorate a un'email (nessun login).
+    # Il digest settimanale (scripts/weekly_digest.py) ricalcola il piano e invia
+    # il riepilogo a digest_email; last_digest_at traccia l'ultimo invio.
+    is_recurring        = Column(Boolean, nullable=False, default=False, server_default="false")
+    digest_email        = Column(String)
+    last_digest_at      = Column(DateTime(timezone=True))
     created_at          = Column(DateTime(timezone=True), server_default=func.now())
     updated_at          = Column(DateTime(timezone=True), onupdate=func.now())
 

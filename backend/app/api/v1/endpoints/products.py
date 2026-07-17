@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.freshness import fresh_price_sql, stale_price_sql
 from app.db.session import get_db
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -56,12 +57,12 @@ def _irrelevant_regex(q: str) -> str:
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
         "pasta": [r"bris.e", r"sfoglia", r"frolla", r"pizza", r"lievitat[[:alnum:]_]*", r"raviol[[:alnum:]_]*", r"tortell[[:alnum:]_]*", r"cappellett[[:alnum:]_]*", r"gnocch[[:alnum:]_]*", r"ripien[[:alnum:]_]*", r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*", r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
         "olio": [r"motor[[:alnum:]_]*", r"motore", r"benzina", r"diesel", r"15w", r"10w", r"5w", r"lubrificant[[:alnum:]_]*", r"shell", r"helix", r"detergente", r"doccia", r"eucerin"],
-        "riso": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pollo": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "petto": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "tonno": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*", r"petfriends", r"surimi", r"granchio"],
-        "insalata": [r"russa", r"capricciosa", r"maionese", r"di riso", r"di pasta", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
-        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pate", r"pate", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "riso": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pollo": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "petto": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "tonno": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*", r"petfriends", r"surimi", r"granchio"],
+        "insalata": [r"russa", r"capricciosa", r"maionese", r"di riso", r"di pasta", r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
+        "pomodori": [r"gatto", r"gatti", r"cane", r"cani", r"purina", r"gourmet", r"mao", r"pat[eé]", r"bao", r"filettini", r"senior", r"almo", r"nature", r"hydration", r"hfc", r"noodles", r"fusian", r"maggi", r"croccant[[:alnum:]_]*", r"pet[[:alnum:]_]*"],
         "mele": [r"aceto", r"succo", r"nettare", r"omogeneizzat[[:alnum:]_]*", r"confettura", r"composta", r"biscott[[:alnum:]_]*", r"grancereale", r"mirtilli", r"nocciol[[:alnum:]_]*"],
     }
     parts = exclusions.get(tokens[0], [])
@@ -274,6 +275,11 @@ async def search_products(
 
     where = " AND ".join(filters)
 
+    # Igiene dati: nei minimi e nei conteggi entrano solo prezzi non in
+    # quarantena e abbastanza freschi per la loro catena (vedi core/freshness).
+    fresh_stats = fresh_price_sql(params, price_alias="x", chain_alias="cx")
+    fresh_best = fresh_price_sql(params, price_alias="x", chain_alias="ch")
+
     # Ricerca fuzzy solo quando la query e abbastanza lunga. Per query brevi
     # o merceologiche (es. caffe) privilegiamo parole intere per evitare falsi
     # positivi come 'caffeina'. Prima selezioniamo candidati testuali, poi
@@ -325,6 +331,7 @@ async def search_products(
             )
             SELECT c.*,
                    pr.min_price,
+                   pr.min_price_per_unit,
                    pr.store_count AS price_store_count,
                    pr.available_store_count,
                    pr.best_price_chain_name,
@@ -336,6 +343,7 @@ async def search_products(
             FROM candidates c
             JOIN LATERAL (
                 SELECT stats.min_price,
+                       stats.min_price_per_unit,
                        stats.store_count,
                        stats.available_store_count,
                        best.chain_name AS best_price_chain_name,
@@ -349,13 +357,20 @@ async def search_products(
                                MIN(x.price) FILTER (WHERE x.in_stock IS TRUE),
                                MIN(x.price)
                            ) AS min_price,
+                           COALESCE(
+                               MIN(x.price_per_unit) FILTER (WHERE x.in_stock IS TRUE),
+                               MIN(x.price_per_unit)
+                           ) AS min_price_per_unit,
                            COUNT(DISTINCT x.store_id) AS store_count,
                            COUNT(DISTINCT x.store_id) FILTER (WHERE x.in_stock IS TRUE) AS available_store_count
                     FROM prices x
                     JOIN stores s ON x.store_id = s.id
+                    JOIN chains cx ON s.chain_id = cx.id
                     WHERE x.product_id = c.id
                       AND x.is_current = TRUE
+                      AND NOT x.quarantined
                       AND x.price >= :min_valid_price
+                      AND {fresh_stats}
                       AND s.is_active = TRUE
                       {price_geo}
                 ) stats
@@ -372,7 +387,9 @@ async def search_products(
                     JOIN chains ch ON s.chain_id = ch.id
                     WHERE x.product_id = c.id
                       AND x.is_current = TRUE
+                      AND NOT x.quarantined
                       AND x.price >= :min_valid_price
+                      AND {fresh_best}
                       AND s.is_active = TRUE
                       {price_geo}
                     ORDER BY x.in_stock DESC, x.price ASC
@@ -447,11 +464,16 @@ async def get_product_prices(
                        )"""
         params["radius_m"] = radius_km * 1000
 
+    # I prezzi stantii restano visibili ma marcati stale=true (il frontend
+    # decide come mostrarli); i prezzi in quarantena non escono mai.
+    stale_expr = stale_price_sql(params, price_alias="p", chain_alias="c")
+
     result = await db.execute(
         text(f"""
             SELECT
                 p.price, p.original_price, p.promo_label,
                 p.price_per_unit, p.in_stock, p.scraped_at,
+                ({stale_expr}) AS stale,
                 s.id AS store_id, s.name AS store_name,
                 s.address, s.city, s.has_delivery, s.has_click_collect,
                 c.name  AS chain_name,
@@ -470,6 +492,7 @@ async def get_product_prices(
             JOIN chains c  ON s.chain_id  = c.id
             WHERE p.product_id = :product_id
               AND p.is_current  = TRUE
+              AND NOT p.quarantined
               AND p.price >= :min_valid_price
               AND s.is_active   = TRUE
               AND ({geo_filter})
@@ -488,7 +511,11 @@ async def get_price_history(
     days: int = Query(90, ge=7, le=365),
     db: AsyncSession = Depends(get_db),
 ):
-    filters = ["product_id = :product_id", "scraped_at > NOW() - make_interval(days => :days)"]
+    filters = [
+        "product_id = :product_id",
+        "scraped_at > NOW() - make_interval(days => :days)",
+        "NOT quarantined",
+    ]
     params: dict = {"product_id": product_id, "days": days}
 
     if store_id:
@@ -521,7 +548,8 @@ async def seo_sitemap(
             SELECT p.id::text AS id, p.name, p.updated_at,
                    count(DISTINCT pr.store_id) AS store_count
             FROM products p
-            JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE AND pr.price >= :min_valid_price
+            JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
+                          AND NOT pr.quarantined AND pr.price >= :min_valid_price
             GROUP BY p.id, p.name, p.updated_at
             ORDER BY store_count DESC, p.updated_at DESC NULLS LAST
             LIMIT :limit
@@ -549,20 +577,26 @@ async def get_product(
     if not row:
         raise HTTPException(status_code=404, detail="Prodotto non trovato")
 
+    # Igiene dati come in /search: min/max, store_count e offerte (rich
+    # snippet AggregateOffer) considerano solo prezzi freschi per la catena.
+    offer_params: dict = {"id": product_id, "min_valid_price": MIN_VALID_PRICE}
+    fresh_offers = fresh_price_sql(offer_params, price_alias="pr", chain_alias="c")
     offers = await db.execute(
         text(
-            """
+            f"""
             SELECT DISTINCT ON (c.id)
                    c.name AS chain_name, c.slug AS chain_slug,
                    pr.price, pr.in_stock, c.shop_url, pr.product_url
             FROM prices pr
             JOIN stores s ON pr.store_id = s.id
             JOIN chains c ON s.chain_id = c.id
-            WHERE pr.product_id = :id AND pr.is_current = TRUE AND pr.price >= :min_valid_price AND s.is_active = TRUE
+            WHERE pr.product_id = :id AND pr.is_current = TRUE AND NOT pr.quarantined
+              AND pr.price >= :min_valid_price AND s.is_active = TRUE
+              AND {fresh_offers}
             ORDER BY c.id, pr.in_stock DESC, pr.price ASC
             """
         ),
-        {"id": product_id, "min_valid_price": MIN_VALID_PRICE},
+        offer_params,
     )
     offer_list = sorted(
         [dict(o) for o in offers.mappings().all()],
