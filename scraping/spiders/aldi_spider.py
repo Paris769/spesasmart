@@ -1,20 +1,17 @@
 """
-Pam Panorama / Pam a Casa price scraper.
+Aldi Italy homepage offers scraper.
 
-Pam a Casa renders product cards server-side. Search pages expose product id,
-name, brand, price, old price, image and unit price without authentication.
-The scraper samples common grocery search terms and stores prices against a
-virtual Pam a Casa online store.
+Aldi renders offer/product tiles server-side on the homepage. This spider parses
+those tiles and stores them as promotional prices for a virtual Aldi offers
+store. The source is not a full grocery catalog and can include non-food offers.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
-import unicodedata
 from typing import Optional
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import urljoin
 
 import asyncpg
 import httpx
@@ -22,58 +19,19 @@ from bs4 import BeautifulSoup
 
 from ..aliases import resolve_existing
 
-log = logging.getLogger("pam")
+log = logging.getLogger("aldi")
 
-BASE_URL = "https://pamacasa.pampanorama.it"
-CHAIN_SLUG = "pam"
-SOURCE = "pam"
-STORE_EXTERNAL_ID = "pam-a-casa"
-STORE_NAME = "Pam a Casa"
-STORE_CITY = "Spinea"
-STORE_PROVINCE = "VE"
-STORE_LAT = 45.4917
-STORE_LNG = 12.1609
-
-RATE = float(os.getenv("PAM_RATE_SECONDS", "0.8"))
-MAX_TERMS = int(os.getenv("PAM_MAX_TERMS", "12"))
-
-DEFAULT_TERMS = [
-    "latte",
-    "pasta",
-    "riso",
-    "tonno",
-    "olio",
-    "caffe",
-    "zucchero",
-    "farina",
-    "uova",
-    "pane",
-    "acqua",
-    "yogurt",
-    "burro",
-    "mozzarella",
-    "parmigiano",
-    "prosciutto",
-    "pollo",
-    "pomodoro",
-    "passata",
-    "biscotti",
-    "cereali",
-    "detersivo",
-    "shampoo",
-]
-
-NON_FOOD_TERMS = {"detersivo", "shampoo"}
-FOOD_EXCLUDED_WORDS = {
-    "detergente",
-    "idratante",
-    "rinfrescante",
-    "antistress",
-    "pelli",
-    "viso",
-    "corpo",
-    "caffeina",
-}
+BASE_URL = "https://www.aldi.it"
+HOMEPAGE_URL = f"{BASE_URL}/it/homepage.html"
+CHAIN_SLUG = "aldi"
+SOURCE = "aldi"
+STORE_EXTERNAL_ID = "aldi-offerte"
+STORE_NAME = "Aldi Offerte"
+STORE_CITY = "Verona"
+STORE_PROVINCE = "VR"
+STORE_LAT = 45.4384
+STORE_LNG = 10.9916
+RATE = 1.0
 
 HEADERS = {
     "User-Agent": (
@@ -85,56 +43,46 @@ HEADERS = {
     "Accept-Language": "it-IT,it;q=0.9",
 }
 
+_ID_RE = re.compile(r"\.(\d{8,18})\.html(?:$|[?#])")
+_PRICE_RE = re.compile(r"(\d+[,.]\d{2})")
 _WS_RE = re.compile(r"\s+")
-_WORD_RE = re.compile(r"[a-z0-9]+")
-_EAN_RE = re.compile(r"/(\d{8,14})\.jpg(?:\?|$)", re.I)
-_UNIT_RE = re.compile(r"-\s*([\d,.]+)\s*€\s+al\s+", re.I)
 
 
 def _clean_text(value: object) -> str:
-    return _WS_RE.sub(" ", str(value or "")).strip()
-
-
-def _norm_words(value: object) -> list[str]:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower()
-    return _WORD_RE.findall(text)
-
-
-def _matches_phrase(product: dict, phrase: str) -> bool:
-    needles = _norm_words(phrase)
-    if not needles:
-        return True
-    words = set(_norm_words(" ".join([product.get("name") or "", product.get("brand") or ""])))
-    if not any(needle in NON_FOOD_TERMS for needle in needles):
-        if words.intersection(FOOD_EXCLUDED_WORDS):
-            return False
-    return all(needle in words for needle in needles)
+    return _WS_RE.sub(" ", str(value or "").replace("\xa0", " ")).strip()
 
 
 def _price(value: object) -> Optional[float]:
-    text = _clean_text(value).replace("€", "").replace(".", "").replace(",", ".")
+    m = _PRICE_RE.search(_clean_text(value))
+    if not m:
+        return None
     try:
-        parsed = float(text)
+        parsed = float(m.group(1).replace(".", "").replace(",", "."))
         return parsed if parsed > 0 else None
     except (TypeError, ValueError):
         return None
 
 
-def _unit_price(meta: str | None) -> Optional[float]:
-    m = _UNIT_RE.search(meta or "")
-    return _price(m.group(1)) if m else None
+
+def _split_brand_title(title: str) -> tuple[str | None, str]:
+    tokens = title.split()
+    brand_tokens = []
+    for token in tokens:
+        letters = [ch for ch in token if ch.isalpha()]
+        if token in {"&", "/"} or (letters and all(ch.isupper() for ch in letters)):
+            brand_tokens.append(token)
+            continue
+        break
+    if brand_tokens and len(brand_tokens) < len(tokens):
+        return " ".join(brand_tokens), " ".join(tokens[len(brand_tokens):])
+    return None, title
+
+def _product_id(href: str) -> str | None:
+    m = _ID_RE.search((href or "").strip())
+    return m.group(1) if m else None
 
 
-def _barcode(product_id: str, image_url: str | None) -> str:
-    if image_url:
-        m = _EAN_RE.search(image_url)
-        if m:
-            return m.group(1)
-    return f"pam_{product_id}"
-
-
-class PamSpider:
+class AldiSpider:
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -153,29 +101,46 @@ class PamSpider:
             await asyncio.sleep(RATE - elapsed)
         self._t_last = loop.time()
 
-    def _terms(self) -> list[str]:
-        custom = os.getenv("PAM_SEARCH_TERMS", "").strip()
-        terms = [t.strip() for t in custom.split(",") if t.strip()] if custom else DEFAULT_TERMS
-        if MAX_TERMS > 0:
-            terms = terms[:MAX_TERMS]
-        return terms
-
-    async def _get_search_page(self, term: str) -> str | None:
+    async def _get(self, url: str) -> str | None:
         await self._throttle()
-        url = f"{BASE_URL}/ricerca?search={quote_plus(term)}"
-        headers = {**HEADERS, "Referer": f"{BASE_URL}/"}
         for attempt in range(3):
             try:
-                r = await self.client.get(url, headers=headers, timeout=45, follow_redirects=True)
+                r = await self.client.get(
+                    url,
+                    headers=HEADERS,
+                    timeout=45,
+                    follow_redirects=True,
+                )
                 if r.status_code == 200:
                     return r.text
-                log.warning("HTTP %s ricerca Pam '%s'", r.status_code, term)
+                log.warning("HTTP %s Aldi %s", r.status_code, url)
                 if r.status_code in (403, 404):
                     return None
             except httpx.RequestError as exc:
-                log.warning("Tentativo %d errore Pam '%s': %s", attempt + 1, term, exc)
+                log.warning("Tentativo %d errore Aldi: %s", attempt + 1, exc)
             await asyncio.sleep(2 ** attempt)
         return None
+
+    async def _get_offers(self) -> str | None:
+        homepage = await self._get(HOMEPAGE_URL)
+        if not homepage:
+            return None
+        paths = sorted(set(re.findall(r"/it/offerte-settimanali/d\.\d{2}-\d{2}-\d{4}\.html", homepage)))
+        if not paths:
+            return homepage
+
+        best_html = None
+        best_count = -1
+        for path in paths:
+            html = await self._get(urljoin(BASE_URL, path))
+            if not html:
+                continue
+            count = len(BeautifulSoup(html, "html.parser").select(".item.plp_product"))
+            log.info("Aldi %s: %d prodotti", path, count)
+            if count > best_count:
+                best_html = html
+                best_count = count
+        return best_html or homepage
 
     async def ensure_store(self) -> str | None:
         row = await self.conn.fetchrow(
@@ -206,9 +171,9 @@ class PamSpider:
                 (chain_id, name, address, city, province, postal_code,
                  coordinates, external_id, has_delivery, has_click_collect, is_active)
             VALUES
-                ($1, $2, 'E-commerce Pam a Casa', $3, $4, NULL,
+                ($1, $2, 'Offerte online', $3, $4, NULL,
                  ST_SetSRID(ST_MakePoint($5, $6), 4326),
-                 $7, TRUE, TRUE, TRUE)
+                 $7, FALSE, FALSE, TRUE)
             RETURNING id
             """,
             chain_id,
@@ -221,40 +186,42 @@ class PamSpider:
         ))
 
     @staticmethod
-    def _parse_products(html: str, phrase: str) -> list[dict]:
+    def _parse_products(html: str) -> list[dict]:
         soup = BeautifulSoup(html, "html.parser")
         products = []
-        for card in soup.select("section.product"):
-            data = card.select_one("[data-id][data-name][data-price]")
-            if not data:
+        seen: set[str] = set()
+        for item in soup.select(".item.plp_product"):
+            link = item.find_parent("a") or item.select_one("a[href]")
+            href = link.get("href") if link else ""
+            product_id = _product_id(href)
+            title_el = item.select_one(".product-title")
+            title = _clean_text(title_el.get_text(" ", strip=True) if title_el else "")
+            price_el = item.select_one(".retail_price .price, .retail_price")
+            price = _price(price_el.get_text(" ", strip=True) if price_el else "")
+            if not product_id or not title or not price or product_id in seen:
                 continue
-            product_id = _clean_text(data.get("data-id"))
-            name = _clean_text(data.get("data-name"))
-            price = _price(data.get("data-price"))
-            if not product_id or not name or not price:
-                continue
-            brand = _clean_text(data.get("data-brand")) or None
-            image_url = data.get("data-img-src") or None
-            if image_url:
-                image_url = urljoin(BASE_URL, image_url)
-            href_el = card.select_one(".product-img a[href], a[href*='/prodotto/']")
-            product_url = urljoin(BASE_URL, href_el.get("href")) if href_el else None
-            original_price = _price(data.get("data-old-price"))
-            if original_price and original_price <= price:
-                original_price = None
-            product = {
-                "barcode": _barcode(product_id, image_url),
+            seen.add(product_id)
+
+            brand, name = _split_brand_title(title)
+            unit_text = _clean_text((item.select_one(".additional-product-info") or {}).get_text(" ", strip=True) if item.select_one(".additional-product-info") else "")
+            img = item.select_one("img[data-src], img[src]")
+            image_url = None
+            if img:
+                image_url = img.get("data-src") or img.get("src")
+                if image_url:
+                    image_url = urljoin(BASE_URL, image_url)
+
+            products.append({
+                "barcode": f"aldi_{product_id}",
                 "name": name,
                 "brand": brand,
                 "image_url": image_url,
                 "price": price,
-                "original_price": original_price,
-                "promo_label": "Offerta" if original_price else None,
-                "price_per_unit": _unit_price(data.get("data-meta")),
-                "product_url": product_url,
-            }
-            if _matches_phrase(product, phrase):
-                products.append(product)
+                "original_price": None,
+                "promo_label": "Offerta Aldi",
+                "price_per_unit": _price(unit_text) if "kg" in unit_text.lower() or "l" in unit_text.lower() else None,
+                "product_url": urljoin(BASE_URL, href),
+            })
         return products
 
     async def _upsert_products_batch(self, products: list[dict], store_id: str) -> int:
@@ -269,11 +236,6 @@ class PamSpider:
         barcodes = list(by_bc.keys())
         async with self.conn.transaction():
             id_by_bc, direct_bcs = await resolve_existing(self.conn, barcodes)
-            source_rows = await self.conn.fetch(
-                "SELECT barcode, source FROM products WHERE barcode = ANY($1::text[])",
-                barcodes,
-            )
-            source_by_bc = {r["barcode"]: r["source"] for r in source_rows}
             new_bcs = [bc for bc in barcodes if bc not in id_by_bc]
             if new_bcs:
                 rows = await self.conn.fetch(
@@ -290,7 +252,7 @@ class PamSpider:
                 for r in rows:
                     id_by_bc[r["barcode"]] = r["id"]
 
-            upd = [bc for bc in barcodes if bc in direct_bcs and source_by_bc.get(bc) == SOURCE]
+            upd = [bc for bc in barcodes if bc in direct_bcs]
             if upd:
                 await self.conn.execute(
                     """UPDATE products AS p SET
@@ -339,24 +301,12 @@ class PamSpider:
         store_id = await self.ensure_store()
         if not store_id:
             return 0
-
-        seen: set[str] = set()
-        total = 0
-        terms = self._terms()
-        log.info("Pam a Casa: %d termini", len(terms))
-        for term in terms:
-            html = await self._get_search_page(term)
-            if not html:
-                continue
-            products = []
-            for product in self._parse_products(html, term):
-                if product["barcode"] not in seen:
-                    seen.add(product["barcode"])
-                    products.append(product)
-            count = await self._upsert_products_batch(products, store_id)
-            total += count
-            log.info("Pam '%s': %d nuovi prezzi", term, count)
-        log.info("=== Pam a Casa: %d prezzi upsert ===", total)
+        html = await self._get_offers()
+        if not html:
+            return 0
+        products = self._parse_products(html)
+        total = await self._upsert_products_batch(products, store_id)
+        log.info("=== Aldi: %d prezzi upsert ===", total)
         return total
 
     async def run(self) -> None:

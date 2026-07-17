@@ -3,15 +3,24 @@ name: Deploy SpesaSmart
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-spesasmart-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  # ── Test backend ──────────────────────────────────────────────────────────
-  test-backend:
+  deploy:
+    name: Test and deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -19,17 +28,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
 
-      - name: Check syntax
+      - name: Check backend syntax
         run: python -m py_compile backend/app/main.py
-
-  # ── Test frontend ─────────────────────────────────────────────────────────
-  test-frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -38,46 +41,45 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci --prefer-offline || npm install
 
-      - name: Type check
+      - name: Type check frontend
         working-directory: frontend
         run: npx tsc --noEmit
-        continue-on-error: true   # non blocca il deploy per errori TS in MVP
 
-      - name: Build
+      - name: Build frontend
         working-directory: frontend
         env:
           NEXT_PUBLIC_API_URL: https://spesasmart-backend-4kyf.onrender.com/api/v1
         run: npm run build
 
-  # ── Deploy Render (backend) ───────────────────────────────────────────────
-  deploy-backend:
-    needs: test-backend
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Trigger Render deploy
-        run: |
-          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            --fail-with-body
-        # RENDER_DEPLOY_HOOK: aggiungi nei GitHub Secrets
-        # Trovi l'URL nella dashboard Render → Service → Settings → Deploy Hook
-
-  # ── Deploy Vercel (frontend) ──────────────────────────────────────────────
-  deploy-frontend:
-    needs: test-frontend
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Vercel
-        run: npx vercel@latest --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy frontend to Vercel
+        if: github.ref == 'refs/heads/main'
         env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          NEXT_PUBLIC_API_URL: https://spesasmart-backend-4kyf.onrender.com/api/v1
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::Missing VERCEL_TOKEN secret"
+            exit 1
+          fi
+          npx vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx vercel@latest build --prod --token="$VERCEL_TOKEN"
+          npx vercel@latest deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: Deploy backend to Render
+        if: github.ref == 'refs/heads/main'
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "::notice::RENDER_DEPLOY_HOOK not set, backend deploy skipped"
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK" \
+            -H "Content-Type: application/json" \
+            -d '{}'

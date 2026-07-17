@@ -36,3 +36,11 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Artefatti locali di sessione/debug (non versionare)
+*.tsbuildinfo
+scripts/out/
+.gh-run-*/
+.gh-run-*.zip
+.tmp_*.py
+.agents/

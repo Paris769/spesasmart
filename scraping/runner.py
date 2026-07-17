@@ -24,6 +24,10 @@ from .spiders.eurospin_spider import EurospinSpider
 from .spiders.iper_spider import IperSpider
 from .spiders.coop_spider import CoopSpider
 from .spiders.pam_spider import PamSpider
+from .spiders.penny_spider import PennySpider
+from .spiders.aldi_spider import AldiSpider
+from .spiders.lidl_spider import LidlSpider
+from .spiders.md_spider import MdSpider
 from .spiders.famila_spider import FamilaSpider
 from .spiders.cosicomodo_spider import CosiComodoSpider
 from .enrich_images import enrich_images
@@ -47,12 +51,12 @@ _CHAINS_SEED = [
     ("Conad",     "conad",     True,  "https://www.conad.it/conad/home.html",                  "redirect"),
     ("Carrefour", "carrefour", True,  "https://www.carrefour.it/spesa-online/",                 "redirect"),
     ("Coop",      "coop",      True,  "https://www.easycoop.com",                                "api"),
-    ("Lidl",      "lidl",      False, None,                                                      "none"),
+    ("Lidl",      "lidl",      False, "https://www.lidl.it/",                                    "api"),
     ("Eurospin",  "eurospin",  False, None,                                                      "none"),
     ("Pam",       "pam",       True,  "https://www.pampanorama.it/spesa-online",                "redirect"),
-    ("MD",        "md",        False, None,                                                      "none"),
-    ("Aldi",      "aldi",      False, None,                                                      "none"),
-    ("Penny",     "penny",     False, None,                                                      "none"),
+    ("MD",        "md",        False, "https://www.mdspa.it/sfogliatore/",                  "api"),
+    ("Aldi",      "aldi",      False, "https://www.aldi.it/it/homepage.html",                "api"),
+    ("Penny",     "penny",     False, "https://www.penny.it/offerte",                         "api"),
     ("Iper",      "iper",      False, None,                                                      "none"),
     ("Famila",    "famila",    True,  "https://www.cosicomodo.it/famila",                       "api"),
     ("Il Gigante", "ilgigante", True, "https://www.cosicomodo.it/ilgigante",                    "api"),
@@ -179,6 +183,30 @@ async def run_pam(conn: asyncpg.Connection, dry_run: bool) -> None:
         await spider.run()
 
 
+async def run_penny(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = PennySpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
+async def run_aldi(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = AldiSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
+async def run_lidl(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = LidlSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
+async def run_md(conn: asyncpg.Connection, dry_run: bool) -> None:
+    async with httpx.AsyncClient() as client:
+        spider = MdSpider(client, conn, dry_run=dry_run)
+        await spider.run()
+
+
 async def run_famila(
     conn: asyncpg.Connection, dry_run: bool, discover_only: bool
 ) -> None:
@@ -233,6 +261,14 @@ async def run_chain(conn: asyncpg.Connection, chain: str, args: argparse.Namespa
         await run_coop(conn, args.dry_run)
     elif chain == "pam":
         await run_pam(conn, args.dry_run)
+    elif chain == "penny":
+        await run_penny(conn, args.dry_run)
+    elif chain == "aldi":
+        await run_aldi(conn, args.dry_run)
+    elif chain == "lidl":
+        await run_lidl(conn, args.dry_run)
+    elif chain == "md":
+        await run_md(conn, args.dry_run)
     elif chain == "famila":
         await run_famila(conn, args.dry_run, args.discover_only)
     elif chain == "cosicomodo":
@@ -271,7 +307,7 @@ async def main(args: argparse.Namespace) -> None:
             # ha un suo workflow dedicato.
             # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
             else ["prune", "esselunga", "conad", "carrefour", "eurospin",
-                  "iper", "coop", "pam", "famila", "dedup"]
+                  "iper", "coop", "penny", "aldi", "lidl", "md", "famila", "dedup"]
         )
 
         for chain in chains:

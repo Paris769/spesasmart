@@ -1,0 +1,18 @@
+# Dipendenze AGGIUNTIVE della pipeline volantini (scraping/flyers/**).
+# Sono separate dai requirements del progetto: installarle solo dove gira
+# la pipeline flyers.
+#
+#   pip install -r scraping/flyers/requirements.txt
+#
+# httpx, asyncpg e beautifulsoup4 sono già nei requirements principali dello
+# scraping e NON vengono ridichiarati qui.
+
+# Rendering PDF → immagini pagina (nessuna dipendenza nativa da installare a parte)
+pypdfium2>=4.30
+
+# pypdfium2.render(...).to_pil() richiede Pillow
+Pillow>=10.0
+
+# SDK Anthropic per l'estrazione vision (extract.py). Non serve per --mock
+# né per le fonti strutturate (eurospin, md).
+anthropic>=0.55

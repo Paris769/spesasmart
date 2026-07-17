@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import PriceWatch from "@/components/ui/PriceWatch";
+import PromoCheck from "@/components/ui/PromoCheck";
 
 // Pagina prodotto SERVER-RENDERED e indicizzabile: chi cerca "prezzo <prodotto>"
 // su Google atterra qui. Genera meta tag + dati strutturati (schema.org Product
@@ -15,6 +17,7 @@ interface Offer {
   chain_name: string;
   chain_slug: string;
   price: number;
+  in_stock: boolean;
   shop_url: string | null;
   product_url: string | null;
 }
@@ -92,7 +95,9 @@ export default async function ProductPage({ params }: { params: { id: string } }
               "@type": "Offer",
               price: o.price,
               priceCurrency: "EUR",
-              availability: "https://schema.org/InStock",
+              availability: o.in_stock === false
+                ? "https://schema.org/OutOfStock"
+                : "https://schema.org/InStock",
               seller: { "@type": "Organization", name: o.chain_name },
             })),
           },
@@ -162,19 +167,28 @@ export default async function ProductPage({ params }: { params: { id: string } }
                     href={goUrl(o.product_url || o.shop_url, o.chain_slug)}
                     target="_blank"
                     rel="noopener noreferrer sponsored"
-                    className="text-[13px] bg-primary text-white px-3 py-1.5 rounded-btn font-semibold"
+                    className={`text-[13px] px-3 py-1.5 rounded-btn font-semibold ${
+                      o.in_stock === false
+                        ? "bg-stone-200 text-stone-700"
+                        : "bg-primary text-white"
+                    }`}
                   >
-                    Acquista
+                    {o.in_stock === false ? "Verifica" : "Acquista"}
                   </a>
                 )}
               </li>
             ))}
           </ul>
           <p className="text-[11px] text-stone-400 mt-1.5">
-            Classifica ordinata solo per prezzo. Alcuni link possono essere affiliati (ADV).
+            Disponibili mostrati prima, poi prezzo. Alcuni link possono essere affiliati (ADV).
           </p>
         </section>
       )}
+
+      {/* Isole client: avviso di prezzo + verifica offerta (fallback grazioso
+          se le API non esistono ancora, il rendering server resta invariato). */}
+      <PriceWatch productId={p.id} productName={p.name} />
+      <PromoCheck productId={p.id} />
 
       <section className="rounded-card bg-hero-grad text-white p-5 relative overflow-hidden">
         <div className="absolute inset-0 bg-mesh" aria-hidden />

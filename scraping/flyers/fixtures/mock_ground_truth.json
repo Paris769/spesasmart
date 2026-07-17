@@ -1,0 +1,24 @@
+{
+  "_istruzioni": "Ground truth etichettata a mano per il volantino mock. Vedi ground_truth.template.json per il formato. Contiene 3 discrepanze volute rispetto a mock_extracted.json: 1 item mancante nell'estrazione (Acqua naturale), 1 prezzo errato (Yogurt greco: vero 1.19, estratto 1.09), 1 pezzatura errata (Caffè: vera 250 g, estratta 2x250 g). Servono a dimostrare che eval.py rileva gli errori.",
+  "chain": "lidl",
+  "flyer_id": "mock-volantino-settimanale",
+  "labeled_by": "fixture-demo",
+  "items": [
+    {"name": "Latte intero UHT", "brand": "Milbona", "price": 0.99, "original_price": 1.19, "unit_size": "1 L", "page_ref": 1},
+    {"name": "Nutella crema spalmabile", "brand": "Ferrero", "price": 3.49, "original_price": 4.29, "unit_size": "450 g", "page_ref": 1},
+    {"name": "Coca-Cola Original", "brand": "Coca-Cola", "price": 1.29, "original_price": 1.79, "unit_size": "1,5 L", "page_ref": 1},
+    {"name": "Anguria intera", "brand": null, "price": 0.49, "original_price": null, "unit_size": "al kg", "page_ref": 2},
+    {"name": "Pesche nettarine Italia", "brand": null, "price": 1.49, "original_price": 1.99, "unit_size": "al kg", "page_ref": 2},
+    {"name": "Mozzarella di bufala campana DOP", "brand": "Italiamo", "price": 1.99, "original_price": 2.49, "unit_size": "250 g", "page_ref": 3},
+    {"name": "Prosciutto crudo stagionato", "brand": "Dulano", "price": 2.29, "original_price": 2.99, "unit_size": "100 g", "page_ref": 3},
+    {"name": "Gelato biscotto vaniglia XXL", "brand": "Gelatelli", "price": 2.79, "original_price": 3.49, "unit_size": "12x110 ml", "page_ref": 4},
+    {"name": "Birra lager premium", "brand": "Perlenbacher", "price": 0.59, "original_price": 0.79, "unit_size": "50 cl", "page_ref": 4},
+    {"name": "Pasta di semola spaghetti", "brand": "Combino", "price": 0.65, "original_price": 0.89, "unit_size": "1 kg", "page_ref": 5},
+    {"name": "Passata di pomodoro", "brand": "Italiamo", "price": 0.79, "original_price": null, "unit_size": "700 g", "page_ref": 5},
+    {"name": "Tonno all'olio di oliva", "brand": "Nixe", "price": 2.99, "original_price": 3.79, "unit_size": "4x80 g", "page_ref": 6},
+    {"name": "Caffè macinato classico", "brand": "Bellarom", "price": 1.99, "original_price": 2.59, "unit_size": "250 g", "page_ref": 6},
+    {"name": "Detersivo lavatrice liquido", "brand": "Formil", "price": 2.49, "original_price": 3.29, "unit_size": "1,375 L", "page_ref": 7},
+    {"name": "Yogurt greco bianco", "brand": "Milbona", "price": 1.19, "original_price": 1.39, "unit_size": "500 g", "page_ref": 7},
+    {"name": "Acqua naturale", "brand": "Saskia", "price": 0.29, "original_price": null, "unit_size": "2 L", "page_ref": 8}
+  ]
+}

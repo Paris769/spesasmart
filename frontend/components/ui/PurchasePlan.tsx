@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { QuickOptimizeResult, outbound } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG, minSpendLabel } from "@/lib/retailServices";
 import {
@@ -36,6 +36,9 @@ type PlanStore = {
     price: number;
     quantity: number;
     product_url: string | null;
+    /** "exact" = prodotto ancorato dall'utente, "text" = match testuale automatico. */
+    match_type?: "exact" | "text";
+    matched_product_name?: string;
   }[];
 };
 
@@ -57,6 +60,8 @@ function buildPlans(result: QuickOptimizeResult) {
             price: it.price,
             quantity: it.quantity,
             product_url: it.product_url,
+            match_type: it.match_type,
+            matched_product_name: it.matched_product_name,
           })),
         },
       ]
@@ -77,6 +82,8 @@ function buildPlans(result: QuickOptimizeResult) {
       price: it.price,
       quantity: it.quantity,
       product_url: it.product_url,
+      match_type: it.match_type,
+      matched_product_name: it.matched_product_name,
     })),
   }));
 
@@ -115,6 +122,15 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
   const [mode, setMode] = useState<StrategyMode | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [done, setDone] = useState<Set<string>>(new Set());
+
+  // Le chiavi degli item sono per indice (s-0, m-0-1): dopo un ricalcolo del
+  // piano spunte e conferme del result precedente vanno azzerate.
+  useEffect(() => {
+    setFulfillment(null);
+    setMode(null);
+    setConfirmed(false);
+    setDone(new Set());
+  }, [result]);
 
   if (!single.length) return null;
 
@@ -351,6 +367,25 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                             {it.product_name}
                           </p>
                           <p className="text-[11px] text-stone-400">richiesta: {it.label}</p>
+                          {it.match_type === "exact" && (
+                            <span
+                              className="mt-0.5 inline-flex items-center gap-1 rounded-pill border border-green-200 bg-green-50 px-1.5 py-0.5 text-[10px] font-bold text-green-700"
+                              title="Corrisponde al prodotto reale che hai scelto: prezzo confrontato in modo esatto."
+                            >
+                              <Check size={10} strokeWidth={3} /> prodotto scelto
+                            </span>
+                          )}
+                          {it.match_type === "text" && (
+                            <span
+                              className="mt-0.5 inline-flex items-center gap-1 rounded-pill border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 max-w-full"
+                              title={`Match automatico su "${it.matched_product_name || it.product_name}". Per un confronto sicuro torna alla lista e scegli il prodotto reale.`}
+                            >
+                              <AlertTriangle size={10} className="shrink-0" />
+                              <span className="truncate">
+                                match automatico{it.matched_product_name ? `: ${it.matched_product_name}` : ""}
+                              </span>
+                            </span>
+                          )}
                         </div>
                         <span className="text-sm font-semibold tnum shrink-0">EUR {it.price.toFixed(2)}</span>
                         {it.product_url ? (

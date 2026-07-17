@@ -1,0 +1,4 @@
+# Cache di lavorazione dei volantini (PDF anche >100 MB): mai in git.
+*
+!.gitignore
+!.gitkeep

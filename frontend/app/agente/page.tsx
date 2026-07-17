@@ -6,7 +6,6 @@ import {
   Calculator,
   CheckCircle2,
   Clock,
-  Info,
   PackageSearch,
   Plus,
   Search,
@@ -19,7 +18,14 @@ import {
 } from "lucide-react";
 import LocationBar from "@/components/ui/LocationBar";
 import PurchasePlan from "@/components/ui/PurchasePlan";
-import { optimizeQuick, Product, QuickOptimizeResult, searchProducts } from "@/lib/api";
+import ChainCoverageBanner from "@/components/ui/ChainCoverageBanner";
+import {
+  optimizeQuick,
+  parseAgentPrompt,
+  Product,
+  QuickOptimizeResult,
+  searchProducts,
+} from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
 type AgentItem = {
@@ -83,26 +89,83 @@ const KEYWORD_ITEMS: Record<string, string[]> = {
   palestra: ["petto di pollo", "riso", "uova", "yogurt greco", "banane"],
 };
 
+function cleanItemQuery(value: string) {
+  return value
+    .replace(/^[-*]\s*/, "")
+    .replace(/\bkefyr\b/gi, "kefir")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstInputSegment(value: string) {
+  return cleanItemQuery(value.split(/\n|,|;/)[0] || "");
+}
+
+function buildResolveSearchTerm(value: string, currentItem?: AgentItem) {
+  const typed = firstInputSegment(value);
+  const current = cleanItemQuery(currentItem?.query || "");
+  if (!current) return typed;
+  if (!typed) return current;
+  const currentFirstWord = current.split(/\s+/)[0]?.toLowerCase();
+  return currentFirstWord && typed.toLowerCase().includes(currentFirstWord)
+    ? typed
+    : `${current} ${typed}`.trim();
+}
+
+function fallbackSearchTerms(term: string, currentItem?: AgentItem) {
+  const current = cleanItemQuery(currentItem?.query || "");
+  const firstWord = term.split(/\s+/)[0] || "";
+  return Array.from(new Set([term, current, firstWord].map(cleanItemQuery).filter((x) => x.length >= 2)));
+}
+
 function itemKey(item: AgentItem) {
-  return item.product_id || item.query.toLowerCase();
+  return item.product_id || cleanItemQuery(item.query).toLowerCase();
 }
 
 function uniqueItems(items: AgentItem[]): AgentItem[] {
-  const seen = new Set<string>();
-  return items
-    .map((item) => ({ ...item, query: item.query.trim(), label: item.label?.trim() || item.query.trim() }))
-    .filter((item) => item.query.length >= 2)
-    .filter((item) => {
-      const key = itemKey(item);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 40);
+  const byKey = new Map<string, AgentItem>();
+  for (const rawItem of items) {
+    const item = {
+      ...rawItem,
+      query: cleanItemQuery(rawItem.query),
+      label: cleanItemQuery(rawItem.label || rawItem.query),
+      quantity: rawItem.quantity || 1,
+    };
+    if (item.query.length < 2) continue;
+    const key = itemKey(item);
+    const existing = byKey.get(key);
+    if (existing) {
+      byKey.set(key, { ...existing, quantity: (existing.quantity || 1) + (item.quantity || 1) });
+      continue;
+    }
+    byKey.set(key, item);
+  }
+  return Array.from(byKey.values()).slice(0, 40);
 }
 
 function textItems(items: string[]): AgentItem[] {
-  return uniqueItems(items.map((query) => ({ query, label: query, quantity: 1 })));
+  return uniqueItems(items.map((query) => ({ query: cleanItemQuery(query), label: cleanItemQuery(query), quantity: 1 })));
+}
+
+function stripRequestContext(value: string) {
+  let text = value.trim();
+  const colonIndex = text.indexOf(":");
+  if (colonIndex >= 0 && text.slice(colonIndex + 1).trim().length >= 2) {
+    text = text.slice(colonIndex + 1);
+  }
+
+  text = text
+    .replace(/^\s*(fammi|fai|prepara|crea|genera)?\s*(la\s+)?(spesa|lista)\s+(per|della|di)?\s*(la\s+)?(settimana|cena|pranzo|colazione|palestra)?\s*(per\s+\d+\s+persone?)?\s*(con\s+)?/i, "")
+    .replace(/^\s*(cena|pranzo|colazione|spesa\s+palestra)\s*(veloce|rapida|leggera)?\s*(per\s+\d+\s+persone?)?\s*(con\s+)?/i, "");
+
+  return cleanItemQuery(text);
+}
+
+function splitProductText(value: string) {
+  return stripRequestContext(value)
+    .split(/\n|,|;|\s+e\s+/i)
+    .map((x) => cleanItemQuery(x))
+    .filter((x) => x.length >= 2 && !/^(per\s+)?\d+\s+persone?$/i.test(x));
 }
 
 function normalizePrompt(text: string) {
@@ -119,10 +182,7 @@ function parseRequest(text: string): AgentItem[] {
   const clean = normalizePrompt(text);
   if (!clean) return [];
 
-  const explicit = text
-    .split(/\n|,|;/)
-    .map((x) => x.replace(/^[-*]\s*/, "").trim())
-    .filter((x) => x.length >= 2);
+  const explicit = splitProductText(text);
 
   if (explicit.length >= 2) return textItems(explicit);
 
@@ -144,22 +204,26 @@ function parseRequest(text: string): AgentItem[] {
 
   if (matched.length) return textItems(matched);
 
-  const fallback = text
-    .split(/\s+e\s+|\s+con\s+|,/)
-    .map((x) => x.trim())
-    .filter((x) => x.length >= 2 && !/^fammi\s+la\s+spesa/i.test(x));
-  return textItems(fallback.length ? fallback : [text]);
+  const fallback = splitProductText(text);
+  return textItems(fallback.length ? fallback : [stripRequestContext(text) || text]);
 }
 
 function hasProductPrice(p: Product) {
   return p.min_price != null && (p.price_store_count ?? 0) > 0;
 }
 
+function firstGenericItem(items: AgentItem[]) {
+  return items.find((item) => !item.product_id);
+}
+
 export default function AgentePage() {
   const { location, radiusKm, setLocation } = useAppStore();
   const [prompt, setPrompt] = useState("Fammi la spesa per la settimana");
+  const [generating, setGenerating] = useState(false);
+  const [listSource, setListSource] = useState<"llm" | "rules" | null>(null);
   const [items, setItems] = useState<AgentItem[]>([]);
   const [manualItem, setManualItem] = useState("");
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const [listMessage, setListMessage] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
@@ -168,28 +232,45 @@ export default function AgentePage() {
   const [loadingStage, setLoadingStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const resolvingItem = useMemo(
+    () => items.find((item) => resolveTarget && itemKey(item) === resolveTarget),
+    [items, resolveTarget]
+  );
+  const suggestionTerm = useMemo(
+    () => (resolveTarget ? buildResolveSearchTerm(manualItem, resolvingItem) : cleanItemQuery(manualItem)),
+    [manualItem, resolveTarget, resolvingItem]
+  );
+
   useEffect(() => {
-    const term = manualItem.trim();
+    const term = suggestionTerm.trim();
     if (term.length < 2) {
       setSuggestions([]);
       setSearching(false);
       return;
     }
 
+    let cancelled = false;
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
-        const found = await searchProducts(term, location?.lat, location?.lng, radiusKm);
-        setSuggestions(found.slice(0, 8));
+        let found: Product[] = [];
+        for (const candidate of fallbackSearchTerms(term, resolvingItem)) {
+          found = await searchProducts(candidate, location?.lat, location?.lng, radiusKm);
+          if (found.length > 0) break;
+        }
+        if (!cancelled) setSuggestions(found.slice(0, 8));
       } catch {
-        setSuggestions([]);
+        if (!cancelled) setSuggestions([]);
       } finally {
-        setSearching(false);
+        if (!cancelled) setSearching(false);
       }
     }, 250);
 
-    return () => clearTimeout(handle);
-  }, [manualItem, location, radiusKm]);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [suggestionTerm, resolvingItem, location, radiusKm]);
 
   const estimatedMode = useMemo(() => {
     if (!result?.best_single) return null;
@@ -199,47 +280,124 @@ export default function AgentePage() {
       : `Conviene fare tutto da ${result.best_single.chain_name}`;
   }, [result]);
 
-  const generateItems = () => {
-    const generated = parseRequest(prompt);
+  const focusNextGeneric = (nextItems: AgentItem[], message: string) => {
+    const nextGeneric = firstGenericItem(nextItems);
+    setSuggestions([]);
+    setResult(null);
+    if (!nextGeneric) {
+      setResolveTarget(null);
+      setManualItem("");
+      setListMessage(message);
+      return;
+    }
+    setResolveTarget(itemKey(nextGeneric));
+    setManualItem(nextGeneric.query);
+    setListMessage(`${message} Ora scegli marca e formato per "${nextGeneric.query}".`);
+  };
+
+  const applyGeneratedItems = (generated: AgentItem[], source: "llm" | "rules") => {
+    const firstGeneric = firstGenericItem(generated);
     setItems(generated);
+    setListSource(generated.length > 0 ? source : null);
+    setResolveTarget(firstGeneric ? itemKey(firstGeneric) : null);
+    setManualItem(firstGeneric?.query || "");
+    setSuggestions([]);
     setResult(null);
     setError(null);
     setLoadingStage(null);
     setListMessage(
       generated.length > 0
-        ? `Lista generata: ${generated.length} prodotti. Ora puoi scegliere riferimenti reali o preparare il piano.`
+        ? `${source === "llm" ? "Lista generata dall'AI" : "Lista generata da regole"}: ${generated.length} prodotti. Scegli marca e formato per i prodotti ambigui.`
         : "Non ho capito la richiesta: scrivi almeno un prodotto o una richiesta tipo spesa per la settimana."
     );
+  };
+
+  // Prova PRIMA il parsing lato server (LLM); se il servizio risponde 503
+  // (llm_unavailable) o fallisce, usa il parser locale a regole.
+  const generateItems = async () => {
+    if (generating) return;
+    setGenerating(true);
+    try {
+      const parsed = await parseAgentPrompt(prompt);
+      const generated = uniqueItems(
+        (parsed.items || []).map((it) => ({
+          query: it.query,
+          label: it.query,
+          quantity: it.quantity || 1,
+        }))
+      );
+      if (generated.length > 0) {
+        applyGeneratedItems(generated, "llm");
+        return;
+      }
+      applyGeneratedItems(parseRequest(prompt), "rules");
+    } catch {
+      applyGeneratedItems(parseRequest(prompt), "rules");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const addItem = (item: AgentItem) => {
     setItems((prev) => uniqueItems([...prev, item]));
     setManualItem("");
+    setResolveTarget(null);
     setSuggestions([]);
     setResult(null);
     setListMessage(null);
   };
 
-  const addManualItem = () => {
-    const query = manualItem.trim();
+  const useManualAsGeneric = () => {
+    const query = resolveTarget ? suggestionTerm : cleanItemQuery(manualItem);
     if (query.length < 2) return;
+    if (resolveTarget) {
+      const nextItems = uniqueItems(
+        items.map((item) =>
+          itemKey(item) === resolveTarget ? { query, label: query, quantity: 1 } : item
+        )
+      );
+      setItems(nextItems);
+      focusNextGeneric(nextItems, `Usero "${query}" come ricerca generica: il match sara meno preciso.`);
+      return;
+    }
     addItem({ query, label: query, quantity: 1 });
   };
 
   const addProduct = (product: Product) => {
     if (!hasProductPrice(product)) return;
-    addItem({
+    const selected: AgentItem = {
       query: product.name,
       label: product.name,
       product_id: product.id,
       image_url: product.image_url,
       brand: product.brand,
       quantity: 1,
-    });
+    };
+    if (resolveTarget) {
+      const nextItems = uniqueItems(
+        items.map((item) => (itemKey(item) === resolveTarget ? selected : item))
+      );
+      setItems(nextItems);
+      focusNextGeneric(nextItems, `Prodotto scelto: ${product.name}.`);
+      return;
+    }
+    addItem(selected);
+  };
+
+  const startResolveItem = (item: AgentItem) => {
+    setResolveTarget(itemKey(item));
+    setManualItem(item.query);
+    setSuggestions([]);
+    setListMessage(`Stai scegliendo marca e formato per "${item.query}".`);
   };
 
   const removeItem = (key: string) => {
     setItems((prev) => prev.filter((x) => itemKey(x) !== key));
+    if (resolveTarget === key) {
+      setResolveTarget(null);
+      setManualItem("");
+      setSuggestions([]);
+    }
     setResult(null);
   };
 
@@ -330,15 +488,7 @@ export default function AgentePage() {
         })}
       </section>
 
-      <div className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 flex gap-2 text-xs text-amber-900">
-        <Info size={16} className="mt-0.5 shrink-0" />
-        <p>
-          SpesaSmart confronta le catene con dati disponibili: Carrefour, Conad,
-          Esselunga, Famila, Il Gigante, Iper, Coop/Ipercoop, Lidl, Eurospin,
-          Aldi, MD, Penny e Pam. Alcuni prezzi, negozi o offerte possono non
-          comparire per zona, prodotto, disponibilita online o aggiornamento dati.
-        </p>
-      </div>
+      <ChainCoverageBanner />
 
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
@@ -375,9 +525,11 @@ export default function AgentePage() {
         />
         <button
           onClick={generateItems}
-          className="inline-flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold active:scale-[0.99] transition"
+          disabled={generating}
+          className="inline-flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-60 active:scale-[0.99] transition"
         >
-          <WandSparkles size={17} /> {items.length ? "Rigenera lista" : "Genera lista"}
+          <WandSparkles size={17} />{" "}
+          {generating ? "Genero la lista..." : items.length ? "Rigenera lista" : "Genera lista"}
         </button>
         {listMessage && (
           <p className={`text-sm rounded-xl px-3 py-2 border ${
@@ -393,7 +545,20 @@ export default function AgentePage() {
       <section className="rounded-card border border-stone-200 bg-white p-4 shadow-card flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-bold text-deep">Lista proposta</p>
+            <p className="text-sm font-bold text-deep flex items-center gap-2 flex-wrap">
+              Lista proposta
+              {listSource && (
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-pill ${
+                    listSource === "llm"
+                      ? "bg-primary-50 text-primary border border-primary/20"
+                      : "bg-stone-100 text-stone-500 border border-stone-200"
+                  }`}
+                >
+                  {listSource === "llm" ? "generata dall'AI" : "generata da regole"}
+                </span>
+              )}
+            </p>
             <p className="text-xs text-stone-400">
               Scrivi un prodotto e scegli il riferimento reale quando compare.
             </p>
@@ -408,34 +573,50 @@ export default function AgentePage() {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {items.map((it) => (
-            <span
-              key={itemKey(it)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-surface pl-1.5 pr-2 py-1 text-sm max-w-full"
-            >
-              {it.image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={it.image_url}
-                  alt=""
-                  className="w-6 h-6 rounded-full object-contain bg-white border border-stone-100 shrink-0"
-                />
-              ) : (
-                <span className="w-6 h-6 rounded-full bg-stone-100 grid place-items-center text-stone-400 shrink-0">
-                  <PackageSearch size={13} />
-                </span>
-              )}
-              <span className="truncate max-w-[190px]">{it.label || it.query}</span>
-              {it.product_id && <span className="text-[10px] text-primary font-bold">scelto</span>}
-              <button
-                onClick={() => removeItem(itemKey(it))}
-                aria-label={`Rimuovi ${it.label || it.query}`}
-                className="text-stone-400 hover:text-red-600 shrink-0"
+          {items.map((it) => {
+            const key = itemKey(it);
+            const isResolving = resolveTarget === key;
+            return (
+              <span
+                key={key}
+                className={`inline-flex items-center gap-1.5 rounded-full border pl-1.5 pr-2 py-1 text-sm max-w-full ${
+                  isResolving ? "border-primary bg-primary-50" : "border-stone-200 bg-surface"
+                }`}
               >
-                <Trash2 size={13} />
-              </button>
-            </span>
-          ))}
+                {it.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={it.image_url}
+                    alt=""
+                    className="w-6 h-6 rounded-full object-contain bg-white border border-stone-100 shrink-0"
+                  />
+                ) : (
+                  <span className="w-6 h-6 rounded-full bg-stone-100 grid place-items-center text-stone-400 shrink-0">
+                    <PackageSearch size={13} />
+                  </span>
+                )}
+                <span className="truncate max-w-[190px]">{it.label || it.query}</span>
+                {it.product_id ? (
+                  <span className="text-[10px] text-primary font-bold">scelto</span>
+                ) : (
+                  <button
+                    onClick={() => startResolveItem(it)}
+                    aria-label={`Scegli marca e formato per ${it.label || it.query}`}
+                    className="text-[10px] text-primary font-bold hover:underline"
+                  >
+                    {isResolving ? "in scelta" : "scegli"}
+                  </button>
+                )}
+                <button
+                  onClick={() => removeItem(key)}
+                  aria-label={`Rimuovi ${it.label || it.query}`}
+                  className="text-stone-400 hover:text-red-600 shrink-0"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            );
+          })}
         </div>
 
         <div className="relative flex flex-col gap-2">
@@ -443,23 +624,23 @@ export default function AgentePage() {
             <input
               value={manualItem}
               onChange={(e) => setManualItem(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addManualItem()}
+              onKeyDown={(e) => e.key === "Enter" && useManualAsGeneric()}
               className="flex-1 border-2 border-stone-200 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
-              placeholder="Aggiungi prodotto, es. latte"
+              placeholder={resolveTarget ? `Scegli marca e formato per ${manualItem || "prodotto"}` : "Aggiungi prodotto, es. latte"}
             />
             <button
-              onClick={addManualItem}
+              onClick={useManualAsGeneric}
               className="w-11 rounded-xl bg-stone-900 text-white grid place-items-center"
-              aria-label="Aggiungi prodotto"
+              aria-label={resolveTarget ? "Usa testo come ricerca generica per la voce selezionata" : "Aggiungi prodotto"}
             >
               <Plus size={18} />
             </button>
           </div>
 
-          {manualItem.trim().length >= 2 && (searching || suggestions.length > 0) && (
+          {suggestionTerm.length >= 2 && (searching || suggestions.length > 0) && (
             <div className="bg-white border border-stone-200 rounded-xl shadow-float overflow-hidden max-h-[56vh] overflow-y-auto">
               <p className="px-4 py-2 text-[12px] font-medium text-primary bg-primary-50 border-b border-primary/10">
-                Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano.
+                {resolveTarget ? `Scegli quale ${suggestionTerm} vuoi: marca, formato e prezzo reale.` : "Riferimenti reali: scegli un prodotto preciso se vuoi evitare match sbagliati nel piano."}
               </p>
               {searching && suggestions.length === 0 && (
                 <p className="px-4 py-3 text-sm text-stone-400">Cerco prodotti...</p>
@@ -512,14 +693,14 @@ export default function AgentePage() {
                 );
               })}
               <button
-                onClick={addManualItem}
+                onClick={useManualAsGeneric}
                 className="w-full px-3 py-2 text-left text-[12px] text-stone-500 hover:bg-surface"
               >
-                + Usa "{manualItem.trim()}" come ricerca generica
+                + Usa "{suggestionTerm}" come ricerca generica
               </button>
             </div>
           )}
-          {manualItem.trim().length >= 2 && !searching && suggestions.length === 0 && (
+          {suggestionTerm.length >= 2 && !searching && suggestions.length === 0 && (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
               Non vedo ancora un riferimento preciso: puoi usare il termine come ricerca generica, ma il match sara meno sicuro.
             </p>
