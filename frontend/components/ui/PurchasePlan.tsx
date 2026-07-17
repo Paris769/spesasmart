@@ -348,6 +348,43 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                     {fulfillment === "courier_pickup" && " - incaricato esterno da prenotare separatamente"}
                   </p>
                 )}
+                {/* Flusso rapido: un click = un prodotto. Apre il prossimo non
+                    inserito e lo spunta (la spunta e' reversibile dalla lista
+                    sotto). Un'apertura per gesto utente = niente blocco popup. */}
+                {confirmed &&
+                  (() => {
+                    const openable = s.items.filter((it) => it.product_url);
+                    const next = openable.find((it) => !done.has(it.key));
+                    const storeDone = openable.filter((it) => done.has(it.key)).length;
+                    if (!openable.length) return null;
+                    return next ? (
+                      <button
+                        onClick={() => {
+                          window.open(
+                            outbound(next.product_url, s.chain_slug),
+                            "_blank",
+                            "noopener"
+                          );
+                          toggle(next.key);
+                        }}
+                        className="mx-3 mb-2 flex items-center justify-center gap-2 bg-secondary text-white text-sm font-bold px-3 py-2.5 rounded-xl active:scale-[0.99] transition"
+                      >
+                        <ArrowRight size={16} />
+                        <span className="truncate">
+                          Inserisci il prossimo: {next.product_name.slice(0, 34)}
+                          {next.product_name.length > 34 ? "…" : ""}
+                        </span>
+                        <span className="shrink-0 tnum">
+                          ({storeDone + 1}/{openable.length})
+                        </span>
+                      </button>
+                    ) : (
+                      <p className="mx-3 mb-2 text-[12px] text-green-700 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
+                        ✓ Tutti i prodotti aperti: controlla il carrello sul sito e vai al
+                        checkout.
+                      </p>
+                    );
+                  })()}
                 <ul className="divide-y divide-stone-100">
                   {s.items.map((it) => {
                     const isDone = done.has(it.key);
