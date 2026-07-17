@@ -46,7 +46,7 @@ def _irrelevant_regex(q: str) -> str:
             r"tazzin[[:alnum:]_]*", r"bicchier[[:alnum:]_]*", r"latte", r"ginseng", r"variegato", r"dessert", r"budino",
             r"affogato", r"fruyo", r"grisb.*", r"zero grassi", r"vasetto", r"mousse", r"cookies",
             r"cioccolato", r"cremosi", r"nocciola", r"vaniglia", r"stracciatella",
-            r"yomo", r"muller", r"müller", r"fage", r"sorbissimo", r"panna", r"gelateria",
+            r"yomo", r"muller", r"mÃƒÂ¼ller", r"fage", r"sorbissimo", r"panna", r"gelateria",
             r"senza peccato", r"crema di", r"zuppalatte", r"colussi", r"cereali", r"orzo",
             r"biscott[[:alnum:]_]*", r"liquore", r"estratto", r"cacao", r"amaro",
         ],
@@ -153,8 +153,8 @@ def _has_deprioritize_terms(q: str) -> bool:
 
 def _parse_area_wkt(area: Optional[str]) -> Optional[str]:
     """
-    Converte un'area "lat,lng;lat,lng;…" (poligono disegnato sulla mappa)
-    in un POLYGON WKT, oppure None se l'input non è valido.
+    Converte un'area "lat,lng;lat,lng;Ã¢â‚¬Â¦" (poligono disegnato sulla mappa)
+    in un POLYGON WKT, oppure None se l'input non ÃƒÂ¨ valido.
 
     I valori sono validati come float in range geografico: il WKT risultante
     viene passato come parametro bound a ST_GeomFromText (nessuna injection).
@@ -195,7 +195,7 @@ async def search_products(
     lat: Optional[float] = Query(None),
     lng: Optional[float] = Query(None),
     radius_km: float = Query(5.0, ge=0.5, le=50),
-    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
+    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;Ã¢â‚¬Â¦'"),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     db: AsyncSession = Depends(get_db),
@@ -411,7 +411,7 @@ async def search_products(
     rows = [dict(r) for r in result.mappings().all()]
 
     # Telemetria (fire-and-forget): alimenta gli agenti Product/Growth. Le
-    # ricerche a 0 risultati sono i gap più preziosi. Non deve mai rompere la
+    # ricerche a 0 risultati sono i gap piÃƒÂ¹ preziosi. Non deve mai rompere la
     # risposta all'utente.
     try:
         await db.execute(
@@ -435,7 +435,7 @@ async def get_product_prices(
     lat: float = Query(...),
     lng: float = Query(...),
     radius_km: float = Query(5.0, ge=0.5, le=50),
-    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;…'"),
+    area: Optional[str] = Query(None, description="Poligono 'lat,lng;lat,lng;Ã¢â‚¬Â¦'"),
     db: AsyncSession = Depends(get_db),
 ):
     # I prezzi sono aggiornati dallo scraper poche volte al giorno: cache 5 min.
