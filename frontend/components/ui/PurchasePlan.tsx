@@ -39,6 +39,7 @@ type PlanStore = {
     /** "exact" = prodotto ancorato dall'utente, "text" = match testuale automatico. */
     match_type?: "exact" | "text";
     matched_product_name?: string;
+    in_stock?: boolean | null;
   }[];
 };
 
@@ -62,6 +63,7 @@ function buildPlans(result: QuickOptimizeResult) {
             product_url: it.product_url,
             match_type: it.match_type,
             matched_product_name: it.matched_product_name,
+            in_stock: it.in_stock,
           })),
         },
       ]
@@ -84,6 +86,7 @@ function buildPlans(result: QuickOptimizeResult) {
       product_url: it.product_url,
       match_type: it.match_type,
       matched_product_name: it.matched_product_name,
+      in_stock: it.in_stock,
     })),
   }));
 
@@ -421,6 +424,14 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                               <span className="truncate">
                                 match automatico{it.matched_product_name ? `: ${it.matched_product_name}` : ""}
                               </span>
+                            </span>
+                          )}
+                          {it.in_stock === false && (
+                            <span
+                              className="mt-0.5 ml-1 inline-flex items-center gap-1 rounded-pill border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700"
+                              title="Al momento risulta esaurito in questo negozio: potrebbe non essere aggiungibile al carrello."
+                            >
+                              esaurito
                             </span>
                           )}
                         </div>

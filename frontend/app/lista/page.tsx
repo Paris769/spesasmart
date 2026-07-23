@@ -6,6 +6,7 @@ import {
   getRecurringLists,
   optimizeQuick,
   updateRecurringList,
+  PlanStrategy,
   Product,
   QuickOptimizeResult,
   RecurringItemInput,
@@ -19,16 +20,26 @@ import {
   CalendarClock,
   Calculator,
   CloudOff,
+  Coins,
   ListChecks,
   Mail,
   Minus,
+  PackageCheck,
   PackageSearch,
   Plus,
   RefreshCw,
   Save,
   Sparkles,
+  Store,
   Trash2,
 } from "lucide-react";
+
+// Filtri del piano carrello (Fase 1 auto-carrello). L'ordine è quello dei chip.
+const PLAN_STRATEGIES: { key: PlanStrategy; label: string; Icon: typeof Coins; hint: string }[] = [
+  { key: "cheapest", label: "Prezzo più basso", Icon: Coins, hint: "Spendi il meno possibile, anche dividendo su più negozi." },
+  { key: "availability", label: "Disponibilità", Icon: PackageCheck, hint: "Preferisci i prodotti disponibili in negozio." },
+  { key: "fewest_stores", label: "Meno negozi", Icon: Store, hint: "Fai tutto in un solo negozio, più comodo." },
+];
 
 // Spesa abituale: lista ricorrente salvata via API /recurring (chiave: email).
 // Ogni settimana il backend ricalcola il piano piu conveniente e lo invia via
@@ -139,6 +150,7 @@ export default function ListaPage() {
   const [result, setResult] = useState<QuickOptimizeResult | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+  const [strategy, setStrategy] = useState<PlanStrategy>("cheapest");
 
   const emailOk = isValidEmail(email);
 
@@ -335,7 +347,7 @@ export default function ListaPage() {
     if (draft.id === list.id) startNewList();
   };
 
-  const calculatePlan = async () => {
+  const calculatePlan = async (strat: PlanStrategy = strategy) => {
     if (draft.items.length === 0) return;
     setOptimizing(true);
     setPlanError(null);
@@ -353,7 +365,8 @@ export default function ListaPage() {
         })),
         activeLocation.lat,
         activeLocation.lng,
-        radiusKm
+        radiusKm,
+        strat
       );
       setResult(plan);
     } catch {
@@ -363,6 +376,13 @@ export default function ListaPage() {
     } finally {
       setOptimizing(false);
     }
+  };
+
+  // Cambia filtro: se un piano è già calcolato, lo ricalcolo subito con la
+  // nuova strategia; altrimenti aggiorno solo la scelta.
+  const chooseStrategy = (strat: PlanStrategy) => {
+    setStrategy(strat);
+    if (result) calculatePlan(strat);
   };
 
   const allLists = useMemo(
@@ -375,6 +395,13 @@ export default function ListaPage() {
 
   const planSummary = useMemo(() => {
     if (!result?.best_single) return null;
+    if (result.strategy === "availability") {
+      const inStock = result.in_stock_count ?? result.n_findable;
+      return `${inStock}/${result.n_findable} prodotti disponibili nel piano`;
+    }
+    if (result.strategy === "fewest_stores") {
+      return `Conviene fare tutto da ${result.best_single.chain_name}`;
+    }
     const multiSavings = result.multi_store?.savings_vs_single || 0;
     return multiSavings > 0
       ? `Dividendo su piu negozi risparmi EUR ${multiSavings.toFixed(2)}`
@@ -577,6 +604,38 @@ export default function ListaPage() {
           </ul>
         )}
 
+        {/* Filtro del piano: come deve ottimizzare l'app il carrello */}
+        {draft.items.length > 0 && (
+          <div className="rounded-xl border border-stone-200 bg-surface p-2.5">
+            <p className="text-[11px] font-semibold text-stone-500 mb-1.5 px-0.5">
+              Come vuoi ottimizzare?
+            </p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {PLAN_STRATEGIES.map(({ key, label, Icon }) => {
+                const active = strategy === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => chooseStrategy(key)}
+                    aria-pressed={active}
+                    className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-center transition active:scale-[0.98] ${
+                      active
+                        ? "border-primary bg-primary-50 text-deep"
+                        : "border-stone-200 bg-white text-stone-500"
+                    }`}
+                  >
+                    <Icon size={17} className={active ? "text-primary" : "text-stone-400"} />
+                    <span className="text-[11px] font-semibold leading-tight">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-stone-400 mt-1.5 px-0.5">
+              {PLAN_STRATEGIES.find((s) => s.key === strategy)?.hint}
+            </p>
+          </div>
+        )}
+
         <div className="grid gap-2 sm:grid-cols-2">
           <button
             onClick={saveList}
@@ -586,7 +645,7 @@ export default function ListaPage() {
             <Save size={16} /> {saving ? "Salvo..." : "Salva spesa abituale"}
           </button>
           <button
-            onClick={calculatePlan}
+            onClick={() => calculatePlan()}
             disabled={optimizing || draft.items.length === 0}
             className="inline-flex items-center justify-center gap-2 bg-secondary text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 active:scale-[0.99] transition"
           >
