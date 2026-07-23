@@ -141,6 +141,14 @@ class QuickOptimizeRequest(BaseModel):
     lat: float
     lng: float
     radius_km: float = 5.0
+    # Strategia di ottimizzazione (Fase 1 auto-carrello):
+    #   "cheapest"      → minimizza il totale (split multi-negozio): default
+    #   "fewest_stores" → preferisci un solo negozio (best_single)
+    #   "availability"  → preferisci prodotti disponibili (in_stock) poi prezzo
+    # Nota: cheapest e fewest_stores sono già entrambi nel risultato; strategy
+    # cambia solo la selezione per-voce quando è "availability" e viene rimandata
+    # al client come suggerimento su quale piano evidenziare.
+    strategy: str = "cheapest"
 
 
 # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Endpoint ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
@@ -269,7 +277,8 @@ _QUICK_ITEM_SQL = text(f"""
         pr.product_url      AS product_url,
         p.id::text          AS product_id,
         p.name              AS product_name,
-        p.image_url         AS image_url
+        p.image_url         AS image_url,
+        pr.in_stock         AS in_stock
     FROM candidates p
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
@@ -285,8 +294,12 @@ _QUICK_ITEM_SQL = text(f"""
                  :radius_m
                )
           )
+    -- Con strategia "availability" (:prefer_stock) il prodotto in stock vince a
+    -- parità di pertinenza; altrimenti conta solo prezzo. NULL trattato come
+    -- disponibile (nessuna info negativa).
     ORDER BY s.id,
              p.match_rank DESC,
+             (CASE WHEN :prefer_stock THEN COALESCE(pr.in_stock, TRUE) ELSE TRUE END) DESC,
              pr.price ASC
 """)
 
@@ -312,7 +325,8 @@ _QUICK_ITEM_BY_ID_SQL = text(f"""
         pr.product_url      AS product_url,
         p.id::text          AS product_id,
         p.name              AS product_name,
-        p.image_url         AS image_url
+        p.image_url         AS image_url,
+        pr.in_stock         AS in_stock
     FROM products p
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
@@ -329,7 +343,9 @@ _QUICK_ITEM_BY_ID_SQL = text(f"""
                  :radius_m
                )
           )
-    ORDER BY s.id, pr.price ASC
+    ORDER BY s.id,
+             (CASE WHEN :prefer_stock THEN COALESCE(pr.in_stock, TRUE) ELSE TRUE END) DESC,
+             pr.price ASC
 """)
 
 
@@ -350,6 +366,8 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
     if not items:
         raise HTTPException(status_code=400, detail="Fornire almeno una voce valida")
 
+    strategy = body.strategy if body.strategy in ("cheapest", "fewest_stores", "availability") else "cheapest"
+    prefer_stock = strategy == "availability"
     radius_m = body.radius_km * 1000
     # stores[sid] = meta + righe per voce; per_item[i] = miglior prezzo globale
     stores: dict[str, dict] = {}
@@ -377,6 +395,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             rows = (await db.execute(_QUICK_ITEM_BY_ID_SQL, {
                 "pid": pid_valid,
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
+                "prefer_stock": prefer_stock,
                 **_FRESH_PARAMS,
             })).mappings().all()
             if rows:
@@ -395,6 +414,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "q_lower": ql, "q_start": f"{ql} %",
                 "q_mid": f"% {ql} %", "q_end": f"% {ql}",
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
+                "prefer_stock": prefer_stock,
                 **_FRESH_PARAMS,
             })).mappings().all()
 
@@ -403,8 +423,13 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             per_item_best.append(None)
             continue
 
-        # miglior prezzo globale per questa voce (per lo split multi-negozio)
-        best_row = min(rows, key=lambda r: float(r["price"]))
+        # miglior riga globale per questa voce (per lo split multi-negozio).
+        # Con strategia "availability" prima gli in-stock, poi il prezzo.
+        def _rank(r):
+            in_stock = r["in_stock"] if r["in_stock"] is not None else True
+            stock_pen = 0 if in_stock else 1
+            return (stock_pen, float(r["price"])) if prefer_stock else (float(r["price"]),)
+        best_row = min(rows, key=_rank)
         per_item_best.append({
             "query": q, "quantity": qty,
             "price": float(best_row["price"]),
@@ -419,6 +444,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             "has_click_collect": best_row["has_click_collect"],
             "product_url": best_row["product_url"],
             "product_name": best_row["product_name"],
+            "in_stock": best_row["in_stock"],
             "match_type": match_type,
             "matched_product_id": best_row["product_id"],
             "matched_product_name": best_row["product_name"],
@@ -450,6 +476,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "product_name": r["product_name"],
                 "product_url": r["product_url"],
                 "image_url": r["image_url"],
+                "in_stock": r["in_stock"],
                 "match_type": match_type,
                 "matched_product_id": r["product_id"],
                 "matched_product_name": r["product_name"],
@@ -485,9 +512,22 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
     if best_single and best_single["covered"] == n_findable and n_findable > 0:
         savings = round(best_single["total"] - multi_total, 2)
 
+    # Numero di voci "disponibili" (in stock) nel piano multi-negozio: informa
+    # l'utente sull'esito reale della strategia "availability".
+    in_stock_count = sum(
+        1 for b in per_item_best if b and (b["in_stock"] is None or b["in_stock"])
+    )
+
+    # Piano consigliato in base alla strategia: "single" (meno negozi) o
+    # "multi" (prezzo più basso / disponibilità, che sfruttano lo split).
+    recommended = "single" if strategy == "fewest_stores" else "multi"
+
     return {
         "n_items": n_items,
         "n_findable": n_findable,
+        "strategy": strategy,
+        "recommended_plan": recommended,
+        "in_stock_count": in_stock_count,
         "best_single": best_single,
         "single_ranking": ranking[:5],
         "multi_store": {

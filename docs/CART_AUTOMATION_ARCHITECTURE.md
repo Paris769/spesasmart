@@ -179,10 +179,22 @@ smette di funzionare.
 
 1. **Revisione legale** dei ToS delle catene target (serve il parere di un
    avvocato; io posso elencare le clausole da controllare).
-2. **Catena pilota**: quale? Idealmente una con cui hai una relazione, o la più
-   permissiva.
+2. **Catena pilota**: ✅ **Esselunga** (scelta 2026-07-23). Nota: prima di
+   scrivere l'adapter serve la revisione legale dei ToS Esselunga (l'automazione
+   della sessione utente potrebbe violarli) e la verifica dell'anti-bot su login
+   e checkout. Esselunga ha consegna a domicilio + ritiro (`clicca e vai`), utile
+   per testare entrambe le modalità di fulfillment.
 3. **Appetito per la manutenzione** (gli adapter si rompono).
 4. **Partnership ora?** Convertire il rischio in legittimità + ricavi.
+
+### Stato implementazione
+- **Fase 1 — FATTA** (2026-07-23): `optimize-quick` supporta il parametro
+  `strategy` (`cheapest` / `availability` / `fewest_stores`), propaga `in_stock`
+  per ogni voce e rimanda `recommended_plan` + `in_stock_count`. Nella tab Lista
+  c'è il selettore di filtro; il piano si ricalcola al cambio strategia; gli
+  articoli esauriti sono marcati "esaurito". Nessuna credenziale coinvolta.
+- **Fase 2 — da avviare**: scheletro estensione MV3 + `CartAdapter` per Esselunga,
+  subordinata alla revisione legale del punto 2.
 
 ## 10. Cosa posso costruire vs cosa no
 

@@ -204,7 +204,12 @@ export interface QuickStoreItem {
   matched_product_name?: string;
   matched_product_id?: string;
   price_per_unit?: number | null;
+  /** Disponibilità del prodotto in quel negozio (false = risulta esaurito). */
+  in_stock?: boolean | null;
 }
+
+/** Strategia di ottimizzazione del piano carrello (Fase 1 auto-carrello). */
+export type PlanStrategy = "cheapest" | "fewest_stores" | "availability";
 
 export interface QuickStore {
   store_id: string;
@@ -224,6 +229,12 @@ export interface QuickStore {
 export interface QuickOptimizeResult {
   n_items: number;
   n_findable: number;
+  /** Strategia applicata dal backend (rimandata per coerenza UI). */
+  strategy?: PlanStrategy;
+  /** Piano consigliato: "single" (meno negozi) o "multi" (prezzo/disponibilità). */
+  recommended_plan?: "single" | "multi";
+  /** Quante voci del piano risultano disponibili (in stock). */
+  in_stock_count?: number;
   best_single: QuickStore | null;
   single_ranking: QuickStore[];
   multi_store: {
@@ -248,7 +259,8 @@ export const optimizeQuick = (
   items: { query: string; quantity?: number; product_id?: string }[],
   lat: number,
   lng: number,
-  radiusKm: number
+  radiusKm: number,
+  strategy: PlanStrategy = "cheapest"
 ): Promise<QuickOptimizeResult> =>
   api
     .post<QuickOptimizeResult>("/lists/optimize-quick", {
@@ -256,6 +268,7 @@ export const optimizeQuick = (
       lat,
       lng,
       radius_km: radiusKm,
+      strategy,
     })
     .then((r) => r.data);
 
