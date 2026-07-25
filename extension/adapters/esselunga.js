@@ -1,14 +1,15 @@
 /**
  * Adapter Esselunga (catena PILOTA).
  *
- * Automatizza "aggiungi al carrello" sul sito Esselunga usando la sessione
- * dell'utente GIÀ AUTENTICATO. Non gestisce credenziali: il login lo fa l'utente
- * sul sito ufficiale.
+ * Automatizza "aggiungi al carrello" su spesaonline.esselunga.it usando la
+ * sessione dell'utente GIÀ AUTENTICATO. Non gestisce credenziali: il login lo fa
+ * l'utente sul sito ufficiale.
  *
- * ⚠️ I SELETTORI qui sotto sono un PUNTO DI PARTENZA e vanno VERIFICATI sul sito
- * reale loggato (variano e cambiano nel tempo). L'adapter è volutamente difensivo:
- * se non trova gli elementi ritorna "not_found"/"blocked" e il flusso ricade sul
- * deep-link manuale. Nessun tentativo di aggirare CAPTCHA/anti-bot.
+ * I selettori sono stati ricavati dal DOM REALE della pagina prodotto Esselunga
+ * (AngularJS) il 2026-07-24. Restano da RI-verificare periodicamente (il sito
+ * cambia) e soprattutto nella pagina da UTENTE LOGGATO, che può differire.
+ * L'adapter è difensivo: se non trova gli elementi ritorna "not_found"/"blocked"
+ * e il flusso ricade sul deep-link manuale. Nessun aggiramento di CAPTCHA/anti-bot.
  *
  * ⚠️ PRIMA DELL'USO IN PRODUZIONE: revisione legale dei ToS Esselunga
  * sull'automazione della sessione utente (vedi docs/CART_AUTOMATION_ARCHITECTURE.md).
@@ -18,92 +19,102 @@ export const meta = {
   slug: "esselunga",
   name: "Esselunga",
   hosts: ["www.esselunga.it", "spesaonline.esselunga.it"],
-  shopUrl: "https://spesaonline.esselunga.it/",
+  shopUrl: "https://spesaonline.esselunga.it/commerce/nav/supermercato/store/home",
   cartUrl: "https://spesaonline.esselunga.it/commerce/nav/auth/spesa/carrello.html",
 };
 
-/**
- * Selettori da verificare/aggiornare sul sito reale. Tenuti in un unico posto
- * così l'aggiornamento è un edit di configurazione, non di logica.
- */
+/** Selettori ricavati dal DOM reale (verificare nella pagina da loggato). */
 export const SELECTORS = {
-  // Indicatore che l'utente è loggato (es. area utente / logout visibile).
-  loggedIn: [
-    "[href*='logout']",
-    "[data-testid*='account']",
-    ".header-user, .user-logged, .area-utente",
-  ],
-  // Pulsante "aggiungi al carrello" nella pagina/scheda prodotto.
+  // Bottone "Accedi" nella navbar: se PRESENTE l'utente NON è loggato.
+  loginButtons: ".esselunga-navbar-right-item-list_v2__item__button",
+  navbar: ".esselunga-navbar-right-item-list_v2__item, [class*='esselunga-navbar']",
+  // Pulsante aggiungi: aria-label "Aggiungi al carrello <nome prodotto>".
   addToCart: [
-    "button[aria-label*='arrello' i]",
-    "button[title*='arrello' i]",
-    "[data-testid*='add-to-cart']",
-    "[data-action*='add-to-cart']",
-    "button.add-to-cart, button.aggiungi",
+    'button[aria-label^="Aggiungi al carrello"]',
+    'button[aria-label*="Aggiungi al carrello"]',
+    ".esselunga-product-detail-item-right-action-add-to-cart button",
   ],
-  // Campo/stepper quantità (opzionale).
-  quantityInput: ["input[name*='quant' i]", "input[aria-label*='quant' i]", ".quantity input"],
-  quantityPlus: ["button[aria-label*='aument' i]", ".quantity .plus, .qty-plus"],
-  // Contatore articoli nel carrello (per verifica).
-  cartCount: ["[data-testid*='cart-count']", ".cart-count, .badge-carrello, .header-cart .count"],
+  // Quantità: è un <select> (opzioni 1..N), non un input.
+  quantitySelect: [
+    "select.esselunga-product-quantity-select",
+    'select[aria-label="Quantità"]',
+    "select[id^='slQta']",
+  ],
+  // Toast di conferma: quando perde la classe ng-hide, l'aggiunta è avvenuta.
+  addFeedback: "#actionFeedback.carrello-aggiunta, #actionFeedback",
 };
 
-// ── Funzioni "in-page": vengono INIETTATE nella pagina (chrome.scripting).
-// Devono essere autonome (ricevono i selettori come argomento, niente closure).
+// ── Funzioni "in-page": INIETTATE nella pagina (chrome.scripting). Autonome,
+// ricevono i selettori come argomento (niente closure sul modulo).
 
-/** true se in pagina risulta una sessione autenticata. */
+const _firstMatch = (list) => {
+  for (const s of list) {
+    const el = document.querySelector(s);
+    if (el) return el;
+  }
+  return null;
+};
+
+/** true se risulta una sessione autenticata (nessun bottone "Accedi"). */
 export function pageIsLoggedIn(sel) {
-  return sel.loggedIn.some((s) => document.querySelector(s));
+  const btns = document.querySelectorAll(sel.loginButtons);
+  for (const b of btns) {
+    const t = ((b.textContent || "") + " " + (b.getAttribute("aria-label") || ""))
+      .trim()
+      .toLowerCase();
+    if (t.includes("accedi")) return false; // "Accedi" visibile → non loggato
+  }
+  // Navbar presente e nessun "Accedi": assumiamo loggato.
+  return !!document.querySelector(sel.navbar);
 }
 
-/** Legge il numero di articoli nel carrello (0 se non trovato). */
-export function pageCartCount(sel) {
-  for (const s of sel.cartCount) {
-    const el = document.querySelector(s);
-    if (el) {
-      const n = parseInt((el.textContent || "").replace(/\D+/g, ""), 10);
-      if (!Number.isNaN(n)) return n;
-    }
-  }
-  return 0;
+/** true se il toast di conferma aggiunta è visibile (non ng-hide). */
+export function pageAddConfirmed(sel) {
+  const el = document.querySelector(sel.addFeedback.split(",")[0]) ||
+    document.querySelector("#actionFeedback");
+  if (!el) return false;
+  return !el.classList.contains("ng-hide");
 }
 
 /**
  * Aggiunge il prodotto della pagina corrente al carrello.
- * Ritorna { status: "added"|"not_found"|"blocked", before, after }.
+ * Ritorna { status: "added"|"not_found"|"blocked" }.
  * NON procede oltre l'aggiunta: nessun checkout, nessun pagamento.
  */
 export function pageAddToCart(sel, qty) {
-  const q = document.querySelector.bind(document);
-  const findFirst = (list) => list.map(q).find(Boolean) || null;
-
-  const before = (() => {
-    for (const s of sel.cartCount) {
-      const el = q(s);
-      if (el) {
-        const n = parseInt((el.textContent || "").replace(/\D+/g, ""), 10);
-        if (!Number.isNaN(n)) return n;
-      }
+  const findFirst = (list) => {
+    for (const s of list) {
+      const el = document.querySelector(s);
+      if (el) return el;
     }
     return null;
-  })();
+  };
 
-  // Imposta la quantità se c'è un campo dedicato (best-effort).
+  // Quantità: seleziona l'opzione giusta nel <select> (AngularJS).
   if (qty && qty > 1) {
-    const qi = findFirst(sel.quantityInput);
-    if (qi) {
-      qi.value = String(qty);
-      qi.dispatchEvent(new Event("input", { bubbles: true }));
-      qi.dispatchEvent(new Event("change", { bubbles: true }));
-    } else {
-      const plus = findFirst(sel.quantityPlus);
-      if (plus) for (let i = 1; i < qty; i++) plus.click();
+    const q = findFirst(sel.quantitySelect);
+    if (q && q.tagName === "SELECT") {
+      const want = String(qty);
+      let chosen = null;
+      for (const o of q.options) {
+        const label = (o.textContent || "").trim();
+        if (label === want || o.value === want || o.value.endsWith(":" + want)) {
+          chosen = o.value;
+          break;
+        }
+      }
+      if (chosen != null) {
+        q.value = chosen;
+        q.dispatchEvent(new Event("change", { bubbles: true }));
+        q.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     }
   }
 
   const btn = findFirst(sel.addToCart);
-  if (!btn) return { status: "not_found", before, after: before };
-  if (btn.disabled) return { status: "blocked", before, after: before };
+  if (!btn) return { status: "not_found" };
+  if (btn.disabled || btn.getAttribute("aria-disabled") === "true")
+    return { status: "blocked" };
   btn.click();
-  return { status: "added", before, after: null };
+  return { status: "added" };
 }
