@@ -83,6 +83,7 @@ async function runPlan(payload) {
 
   // 2) Per ogni prodotto: apri la scheda e aggiungi al carrello.
   const results = [];
+  let diag = null; // snapshot del primo fallimento, per aggiustare i selettori
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     await setProgress({
@@ -107,6 +108,10 @@ async function runPlan(payload) {
         status = ok ? "added" : "unconfirmed";
       }
       results.push({ name: it.product_name, status });
+      // Al primo prodotto non aggiunto, fotografa la pagina per la diagnosi.
+      if (status !== "added" && !diag) {
+        diag = await inPage(tabId, esselunga.pageDiagnostics, [esselunga.SELECTORS]).catch(() => null);
+      }
     } catch (e) {
       results.push({ name: it.product_name, status: "error" });
     }
@@ -122,6 +127,7 @@ async function runPlan(payload) {
     done: items.length,
     added,
     results,
+    diag,
     message: `Aggiunti ${added}/${items.length}. Controlla il carrello, scegli lo slot e completa TU l'ordine.`,
   });
 }
