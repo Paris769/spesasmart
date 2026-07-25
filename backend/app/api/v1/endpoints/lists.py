@@ -489,6 +489,14 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
     ranking = sorted(stores.values(), key=lambda s: (-s["covered"], s["total"]))
     best_single = ranking[0] if ranking else None
 
+    # Il confronto e' utile se mostra CATENE diverse: con catene molto capillari
+    # (es. Famila, decine di negozi) i primi 5 erano tutti lo stesso marchio,
+    # nascondendo le alternative reali. Teniamo il miglior negozio per catena.
+    by_chain: dict[str, dict] = {}
+    for s in ranking:
+        by_chain.setdefault(s["chain_slug"] or s["store_id"], s)
+    chain_ranking = list(by_chain.values())
+
     # Split multi-negozio (goloso, per voce piu' economica)
     multi_by_store: dict[str, dict] = {}
     multi_total = 0.0
@@ -529,7 +537,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         "recommended_plan": recommended,
         "in_stock_count": in_stock_count,
         "best_single": best_single,
-        "single_ranking": ranking[:5],
+        "single_ranking": chain_ranking[:6],
         "multi_store": {
             "total": multi_total,
             "stores": sorted(multi_by_store.values(), key=lambda s: -s["subtotal"]),

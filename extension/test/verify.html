@@ -2,77 +2,94 @@
 <html lang="it">
   <head>
     <meta charset="utf-8" />
-    <title>Verifica adapter Esselunga</title>
+    <title>Test flusso agente — Esselunga</title>
+    <style>
+      body { font: 13px/1.5 system-ui, sans-serif; padding: 16px; }
+      pre { background: #f5f5f4; padding: 12px; border-radius: 8px; white-space: pre-wrap; }
+      .pass { color: #15803d; } .fail { color: #dc2626; font-weight: 700; }
+    </style>
   </head>
   <body>
-    <!-- Mock del DOM REALE Esselunga (struttura ricavata dal sito il 2026-07-24). -->
-    <!-- Navbar: bottone "Accedi" presente = utente NON loggato. -->
-    <div class="esselunga-navbar-right-item-list_v2__item">
-      <button class="esselunga-navbar-right-item-list_v2__item__button" aria-label="Accedi">
-        <i class="icon-account"></i>Accedi
-      </button>
-    </div>
-
-    <!-- Dettaglio prodotto: select quantità + bottone aggiungi + toast conferma. -->
-    <div class="esselunga-product-detail-item-right-action-quantita">
-      <select class="esselunga-product-quantity-select" aria-label="Quantità" id="slQta_">
-        <option value="1">1</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="5">5</option>
-        <option value="6">6</option>
-        <option value="7">7</option>
-        <option value="8">8</option>
-        <option value="9">9</option>
-      </select>
-    </div>
-    <div class="esselunga-product-detail-item-right-action-add-to-cart">
-      <button class="el-btn px-5" aria-label="Aggiungi al carrello Cuore di Farina di Avena 900 g">
-        Aggiungi
-      </button>
-    </div>
-    <div id="actionFeedback" class="carrello-aggiunta esselunga-feedback-toast ng-hide">Aggiunto al carrello</div>
-
+    <h1>Test flusso agente — adapter Esselunga</h1>
+    <p>Eseguito contro il <strong>DOM reale</strong> catturato da spesaonline.esselunga.it.</p>
+    <div id="stage" style="display:none"></div>
     <pre id="out">running…</pre>
 
     <script type="module">
-      import { SELECTORS, pageIsLoggedIn, pageAddToCart, pageAddConfirmed } from "../adapters/esselunga.js";
+      import { SELECTORS, pageIsLoggedIn, pageAddToCart, pageAddConfirmed, pageDiagnostics }
+        from "../adapters/esselunga.js";
+      import { buildProductPage } from "./fixture-esselunga.js";
 
       const log = [];
-      const assert = (name, cond) => log.push((cond ? "PASS" : "FAIL") + " — " + name);
+      const assert = (name, cond) => log.push({ name, ok: !!cond });
+      const stage = document.getElementById("stage");
 
-      // Simula il comportamento reale: il click su "Aggiungi" mostra il toast
-      // e registra la quantità scelta nel <select>.
-      let addedQty = null;
-      document
-        .querySelector('button[aria-label^="Aggiungi al carrello"]')
-        .addEventListener("click", () => {
-          addedQty = document.querySelector("select.esselunga-product-quantity-select").value;
-          document.getElementById("actionFeedback").classList.remove("ng-hide");
-        });
+      /** Monta la pagina fixture e collega il comportamento reale del sito:
+       *  il click su "Aggiungi" mostra il toast (rimuove ng-hide). */
+      function mount(opts) {
+        stage.innerHTML = buildProductPage(opts);
+        const btn = stage.querySelector('button[aria-label^="Aggiungi al carrello"]');
+        const state = { clicked: false, qtyAtClick: null };
+        if (btn && !btn.disabled) {
+          btn.addEventListener("click", () => {
+            state.clicked = true;
+            const sel = stage.querySelector("select.esselunga-product-quantity-select");
+            state.qtyAtClick = sel ? sel.value : null;
+            stage.querySelector("#actionFeedback").classList.remove("ng-hide");
+          });
+        }
+        return state;
+      }
+      // L'adapter usa document.querySelector: la fixture è nel documento, ok.
 
-      // 1) NON loggato: il bottone "Accedi" è presente.
-      assert("isLoggedIn=false con 'Accedi' presente", pageIsLoggedIn(SELECTORS) === false);
+      // ── T1: rilevamento login ────────────────────────────────────────────
+      mount({ logged: false });
+      assert("T1a ospite → isLoggedIn = false", pageIsLoggedIn(SELECTORS) === false);
+      mount({ logged: true });
+      assert("T1b loggato → isLoggedIn = true", pageIsLoggedIn(SELECTORS) === true);
 
-      // 2) Loggato: rimuovo il bottone "Accedi".
-      document.querySelector(".esselunga-navbar-right-item-list_v2__item__button").remove();
-      assert("isLoggedIn=true con 'Accedi' assente", pageIsLoggedIn(SELECTORS) === true);
+      // ── T2: aggiunta con quantità (formato Angular value="number:N") ─────
+      let st = mount({ logged: true });
+      assert("T2a conferma FALSA prima del click", pageAddConfirmed(SELECTORS) === false);
+      const r2 = pageAddToCart(SELECTORS, 3);
+      assert("T2b addToCart → 'added'", r2.status === "added");
+      assert("T2c bottone realmente cliccato", st.clicked === true);
+      assert("T2d quantità impostata su 'number:3'", st.qtyAtClick === "number:3");
+      assert("T2e conferma VERA dopo il click (toast)", pageAddConfirmed(SELECTORS) === true);
 
-      // 3) Prima del click il toast è nascosto (ng-hide).
-      assert("conferma=false prima del click", pageAddConfirmed(SELECTORS) === false);
+      // ── T3: quantità 1 (nessun cambio necessario) ────────────────────────
+      st = mount({ logged: true });
+      const r3 = pageAddToCart(SELECTORS, 1);
+      assert("T3a addToCart qty=1 → 'added'", r3.status === "added");
+      assert("T3b quantità resta 'number:1'", st.qtyAtClick === "number:1");
 
-      // 4) addToCart con quantità 3.
-      const r = pageAddToCart(SELECTORS, 3);
-      assert("addToCart ritorna 'added'", r.status === "added");
-      assert("quantità impostata a 3 nel <select>", addedQty === "3");
+      // ── T4: prodotto esaurito → NON deve dire 'added' ────────────────────
+      st = mount({ logged: true, outOfStock: true });
+      const r4 = pageAddToCart(SELECTORS, 1);
+      assert("T4a esaurito → status 'blocked'", r4.status === "blocked");
+      assert("T4b nessun click su bottone disabilitato", st.clicked === false);
+      assert("T4c nessuna conferma toast", pageAddConfirmed(SELECTORS) === false);
 
-      // 5) Dopo il click il toast è visibile → conferma true.
-      assert("conferma=true dopo il click", pageAddConfirmed(SELECTORS) === true);
+      // ── T5: pagina senza bottone → 'not_found' + diagnostica utile ───────
+      stage.innerHTML = "<div>pagina inattesa</div>";
+      const r5 = pageAddToCart(SELECTORS, 1);
+      assert("T5a pagina inattesa → 'not_found'", r5.status === "not_found");
+      const d5 = pageDiagnostics(SELECTORS);
+      assert("T5b diagnostica segnala addBtn assente", d5.addBtn === null);
+      assert("T5c diagnostica include url", typeof d5.url === "string" && d5.url.length > 0);
 
-      const allPass = log.every((l) => l.startsWith("PASS"));
-      document.getElementById("out").textContent =
-        log.join("\n") + "\n\nRESULT: " + (allPass ? "ALL PASS" : "SOME FAIL");
+      // ── T6: diagnostica su pagina valida trova gli elementi ──────────────
+      mount({ logged: true });
+      const d6 = pageDiagnostics(SELECTORS);
+      assert("T6a diagnostica trova il bottone aggiungi", !!d6.addBtn);
+      assert("T6b diagnostica trova il select quantità", !!d6.qtySelect);
+      assert("T6c diagnostica vede il toast", d6.feedbackPresent === true);
+
+      // ── Report ───────────────────────────────────────────────────────────
+      const failed = log.filter((l) => !l.ok);
+      document.getElementById("out").innerHTML =
+        log.map((l) => `<span class="${l.ok ? "pass" : "fail"}">${l.ok ? "PASS" : "FAIL"} — ${l.name}</span>`).join("\n") +
+        `\n\nRESULT: ${failed.length === 0 ? "ALL PASS" : failed.length + " FAILED"} (${log.length} test)`;
     </script>
   </body>
 </html>

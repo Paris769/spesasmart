@@ -28,10 +28,25 @@ dell'architettura in [`docs/CART_AUTOMATION_ARCHITECTURE.md`](../docs/CART_AUTOM
    stessa struttura (il carrello vero è dietro il login).
 3. Gestione robusta delle SPA/navigazioni e dei tempi di caricamento.
 
-### Verifica automatica della logica (senza login)
-`test/verify.html` importa l'adapter reale e lo esegue contro un DOM che replica
-Esselunga. Per lanciarlo: `cd extension && python -m http.server 8099`, poi apri
-`http://localhost:8099/test/verify.html` → deve mostrare **RESULT: ALL PASS**.
+### Test automatici del flusso (senza login, senza toccare il sito)
+Due suite, entrambe da tenere verdi:
+
+1. **Adapter contro il DOM REALE** (18 test) — `test/verify.html` usa
+   `test/fixture-esselunga.js`, cioè l'HTML realmente prodotto da
+   spesaonline.esselunga.it (AngularJS, `value="number:N"`, toast `#actionFeedback`).
+   Copre: login sì/no, quantità, prodotto esaurito, pagina inattesa, diagnostica.
+   ```
+   cd extension && python -m http.server 8099
+   # apri http://localhost:8099/test/verify.html  → RESULT: ALL PASS
+   ```
+2. **Orchestratore end-to-end** (17 test) — `test/orchestrator.test.mjs` simula le
+   API di Chrome e verifica l'intero flusso: piano → login → apertura schede →
+   aggiunta → conferma → carrello, più i vincoli di sicurezza (nessun checkout
+   automatico, stop se non loggato, nessun "aggiunto" senza conferma, permessi
+   del manifest minimi).
+   ```
+   node extension/test/orchestrator.test.mjs   # → RESULT: ALL PASS
+   ```
 
 ### Checklist ToS da far verificare a un legale
 - Il contratto/ToS di Esselunga Spesa Online **vieta l'accesso automatizzato,
