@@ -164,6 +164,11 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
   const unsupportedStores = fulfillment
     ? stores.filter((store) => !supportsService(store, fulfillment))
     : [];
+  // Offerta Esselunga per l'auto-carrello (pilota): la cerchiamo nel ranking
+  // completo, così il pulsante compare anche quando Esselunga non è il negozio
+  // vincente del piano. Se è già mostrata come card, il suo pulsante basta.
+  const esselungaRanked = result.single_ranking?.find((s) => s.chain_slug === "esselunga");
+  const esselungaShownAsStore = stores.some((s) => s.chain_slug === "esselunga");
   const stepLabel = !fulfillment
     ? "Passo 1 di 3"
     : mode === null
@@ -202,6 +207,28 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
     });
     window.setTimeout(() => {
       setExtState((prev) => (prev[s.key] === "sent" ? { ...prev, [s.key]: "noext" } : prev));
+    }, 1500);
+  };
+
+  // Invia all'estensione l'offerta Esselunga presa dal ranking (quando Esselunga
+  // non è una card del piano ma è comunque disponibile).
+  const fillEsselungaRanked = () => {
+    if (!esselungaRanked) return;
+    const key = "esselunga-ranked";
+    setExtState((p) => ({ ...p, [key]: "sent" }));
+    sendPlanToExtension({
+      chain_slug: "esselunga",
+      chain_name: esselungaRanked.chain_name,
+      items: esselungaRanked.items
+        .filter((it) => it.product_url)
+        .map((it) => ({
+          product_name: it.product_name,
+          product_url: it.product_url,
+          quantity: it.quantity,
+        })),
+    });
+    window.setTimeout(() => {
+      setExtState((prev) => (prev[key] === "sent" ? { ...prev, [key]: "noext" } : prev));
     }, 1500);
   };
 
@@ -550,6 +577,42 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                 )}
               </div>
             ))}
+
+            {/* Auto-carrello Esselunga anche quando non è il negozio del piano:
+                usa i prezzi Esselunga dal ranking. Pilota. */}
+            {confirmed && esselungaRanked && !esselungaShownAsStore && (
+              <div className="rounded-btn border-2 border-primary/40 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 bg-surface">
+                  <span className="text-sm font-semibold text-deep">
+                    {esselungaRanked.chain_name}{" "}
+                    <span className="text-[11px] font-normal text-stone-400">
+                      (pilota auto-carrello)
+                    </span>
+                  </span>
+                  <span className="text-sm font-bold tnum">€{esselungaRanked.total.toFixed(2)}</span>
+                </div>
+                <button
+                  onClick={fillEsselungaRanked}
+                  className="w-full flex items-center justify-center gap-1.5 bg-deep text-white text-sm font-semibold py-2.5 active:scale-[0.99] transition"
+                >
+                  🧩 Riempi il carrello su Esselunga automaticamente
+                </button>
+                {extState["esselunga-ranked"] === "sent" && (
+                  <p className="px-3 py-2 text-[12px] text-stone-500 bg-surface">Invio all&apos;estensione…</p>
+                )}
+                {extState["esselunga-ranked"] === "ack" && (
+                  <p className="px-3 py-2 text-[12px] text-green-700 bg-green-50">
+                    Inviato: sto aggiungendo i prodotti nella tua sessione Esselunga. Apri l&apos;icona
+                    dell&apos;estensione per il progresso. Il pagamento resta a te.
+                  </p>
+                )}
+                {extState["esselunga-ranked"] === "noext" && (
+                  <p className="px-3 py-2 text-[12px] text-amber-700 bg-amber-50">
+                    Estensione non rilevata: installa l&apos;estensione SpesaSmart per il riempimento automatico.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="grid gap-2 md:grid-cols-2">
               <p className="flex items-start gap-1.5 text-[11px] text-stone-400">
