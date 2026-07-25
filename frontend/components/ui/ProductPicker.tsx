@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { Product, searchProducts } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { DEFAULT_LOCATION } from "@/lib/location";
 
 // Ricerca + ancoraggio prodotto riusabile (pattern estratto da agente/page.tsx):
 // input con autocomplete di prodotti REALI dal catalogo. Chi lo usa riceve o un
@@ -35,7 +36,11 @@ export default function ProductPicker({ placeholder, onPickProduct, onPickGeneri
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
-        const found = await searchProducts(term, location?.lat, location?.lng, radiusKm);
+        // Senza GPS usiamo la STESSA posizione di ripiego del calcolo piano:
+        // altrimenti proporremmo prodotti (magari di catene lontane) che il
+        // piano non potra' mai trovare, e l'utente vedrebbe "non trovato".
+        const at = location ?? DEFAULT_LOCATION;
+        const found = await searchProducts(term, at.lat, at.lng, radiusKm);
         if (!cancelled) setSuggestions(found.slice(0, 8));
       } catch {
         if (!cancelled) setSuggestions([]);

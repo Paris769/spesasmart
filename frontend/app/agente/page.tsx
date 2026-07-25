@@ -27,6 +27,7 @@ import {
   searchProducts,
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { DEFAULT_LOCATION } from "@/lib/location";
 
 type AgentItem = {
   query: string;
@@ -59,7 +60,7 @@ const WEEKLY_BASICS = [
 const DINNER_BASICS = ["pasta", "passata", "parmigiano", "insalata", "pane"];
 const BREAKFAST_BASICS = ["latte", "caffe", "biscotti", "yogurt", "cereali"];
 const CLEANING_BASICS = ["detersivo", "carta igienica", "ammorbidente", "spugne"];
-const DEFAULT_LOCATION = { lat: 45.4642, lng: 9.19, label: "Milano" };
+// DEFAULT_LOCATION condivisa: vedi lib/location.ts
 
 const EXAMPLE_PROMPTS = [
   "Fammi la spesa per la settimana",
@@ -253,9 +254,12 @@ export default function AgentePage() {
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
+        // Senza GPS usiamo la stessa posizione di ripiego del piano: cosi' non
+        // proponiamo prodotti che il calcolo dichiarera' "non trovati".
+        const at = location ?? DEFAULT_LOCATION;
         let found: Product[] = [];
         for (const candidate of fallbackSearchTerms(term, resolvingItem)) {
-          found = await searchProducts(candidate, location?.lat, location?.lng, radiusKm);
+          found = await searchProducts(candidate, at.lat, at.lng, radiusKm);
           if (found.length > 0) break;
         }
         if (!cancelled) setSuggestions(found.slice(0, 8));
