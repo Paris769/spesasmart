@@ -56,16 +56,32 @@ node extension/test/orchestrator.test.mjs               → ALL PASS
    → Aggiunti stelvio/dop/formaggio/stagionato/asiago/… ai termini irrilevanti
    per "latte", sia nel piano sia nella ricerca.
 
+## ✅ Verifica sulla pagina DA UTENTE AUTENTICATO (2026-07-25)
+
+Era il rischio residuo principale: la pagina prodotto vista **da loggato**
+poteva avere una struttura diversa da quella pubblica su cui erano tarati i
+selettori. Verificato con l'utente autenticato sul sito reale (sola lettura del
+DOM, nessuna modifica al carrello):
+
+| Controllo dell'adapter | Esito da loggato |
+|---|---|
+| Rilevamento sessione (`pageIsLoggedIn`) | ✅ riconosce l'utente autenticato |
+| Bottone `button[aria-label^="Aggiungi al carrello"]` | ✅ trovato col **primo** selettore, abilitato |
+| Select quantità `select.esselunga-product-quantity-select` | ✅ trovato, opzioni `number:1/2/3` |
+| Toast conferma `#actionFeedback` | ✅ presente |
+
+**Conclusione: la struttura da loggato coincide con quella pubblica.** I selettori
+dell'adapter sono validi nella sessione autenticata — non serve alcun adattamento.
+
 ## Cosa resta fuori dai test automatici
 
-L'unico passaggio non automatizzabile è l'**esecuzione reale sul sito Esselunga
-con l'utente autenticato**: richiede le credenziali dell'utente e la sua
-sessione, e per progettazione avviene nel suo browser (l'estensione agisce sulla
-sessione già aperta, non conserva password). Il comportamento dell'adapter è però
-verificato contro il DOM reale del sito, quindi il rischio residuo è limitato a
-eventuali differenze della pagina **da loggato**; in quel caso il popup
-dell'estensione mostra una **diagnostica copiabile** che permette di correggere
-i selettori in un passaggio.
+Solo il **click reale di aggiunta al carrello**, che per progettazione avviene nel
+browser dell'utente dove è installata l'estensione (agisce sulla sessione già
+aperta, non conserva password) e modifica un carrello vero. Tutto ciò che lo
+precede — rilevamento login, individuazione degli elementi, quantità, conferma —
+è verificato sulla pagina autenticata reale. Se il sito cambiasse, il popup
+dell'estensione mostra una **diagnostica copiabile** per correggere i selettori
+in un passaggio.
 
 Resta inoltre il gate legale: **revisione dei ToS Esselunga** sull'automazione
 della sessione utente (checklist in `extension/README.md`).
