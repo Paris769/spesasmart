@@ -98,13 +98,19 @@ async function runPlan(payload) {
       await chrome.tabs.update(tabId, { url: it.product_url, active: true });
       await awaitTabComplete(tabId);
       // La SPA AngularJS può popolare il DOM dopo il "complete": piccola attesa.
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, 900));
+      // Conteggio PRIMA: il carrello è la prova persistente dell'aggiunta.
+      const before = await inPage(tabId, esselunga.pageCartCount, [esselunga.SELECTORS]).catch(() => null);
       const r = await inPage(tabId, esselunga.pageAddToCart, [esselunga.SELECTORS, it.quantity || 1]);
       let status = r?.status || "not_found";
       if (status === "added") {
-        // Conferma tramite toast (#actionFeedback perde ng-hide quando aggiunge).
-        await new Promise((res) => setTimeout(res, 900));
-        const ok = await inPage(tabId, esselunga.pageAddConfirmed, [esselunga.SELECTORS]).catch(() => false);
+        // Conferma: il contatore carrello deve essere aumentato. Ritenta un paio
+        // di volte perché l'aggiornamento è asincrono.
+        let ok = false;
+        for (let a = 0; a < 4 && !ok; a++) {
+          await new Promise((res) => setTimeout(res, 700));
+          ok = await inPage(tabId, esselunga.pageAddConfirmed, [esselunga.SELECTORS, before]).catch(() => false);
+        }
         status = ok ? "added" : "unconfirmed";
       }
       results.push({ name: it.product_name, status });

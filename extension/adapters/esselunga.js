@@ -20,11 +20,9 @@ export const meta = {
   name: "Esselunga",
   hosts: ["www.esselunga.it", "spesaonline.esselunga.it"],
   shopUrl: "https://spesaonline.esselunga.it/commerce/nav/supermercato/store/home",
-  // NB: non esiste un URL carrello stabile e pubblico (quello ipotizzato in
-  // origine rispondeva "Risorsa richiesta non esistente"). A fine run apriamo
-  // il carrello CLICCANDO l'icona in navbar (pageOpenCart); se non c'e',
-  // restiamo sull'ultima pagina senza rompere nulla.
-  cartUrl: null,
+  // URL reale del carrello, letto dal link in navbar di una sessione
+  // autenticata (quello ipotizzato in origine dava "Risorsa non esistente").
+  cartUrl: "https://spesaonline.esselunga.it/commerce/nav/supermercato/checkout/trolley",
 };
 
 /** Selettori ricavati dal DOM reale (verificare nella pagina da loggato). */
@@ -41,11 +39,17 @@ export const SELECTORS = {
     // che alla scheda dettaglio.
     "button.el-product-card-b__add-to-cart-btn",
   ],
-  // Icona carrello in navbar (visibile da loggati): per aprire il carrello.
+  // Icona/link carrello in navbar (visibile da loggati).
   cartIcon: [
+    'a[aria-label="Carrello"]',
     ".esselunga-navbar-right-item-list_v2__item__button i.icon-cart-empty",
-    ".esselunga-navbar-right-item-list_v2__item__button i[class*='icon-cart']",
     "[class*='esselunga-navbar'] [class*='icon-cart']",
+  ],
+  // Contatore articoli nel carrello: è la PROVA PERSISTENTE dell'aggiunta.
+  // Il toast di conferma sparisce dopo pochi istanti, il contatore no.
+  cartCount: [
+    ".esselunga-navbar-right-item-list_v2__item__button__item-quantity",
+    'a[aria-label="Carrello"] span',
   ],
   // Quantità: è un <select> (opzioni 1..N), non un input.
   quantitySelect: [
@@ -132,12 +136,39 @@ export function pageOpenCart(sel) {
   return false;
 }
 
-/** true se il toast di conferma aggiunta è visibile (non ng-hide). */
-export function pageAddConfirmed(sel) {
-  const el = document.querySelector(sel.addFeedback.split(",")[0]) ||
-    document.querySelector("#actionFeedback");
-  if (!el) return false;
-  return !el.classList.contains("ng-hide");
+/**
+ * Numero di articoli nel carrello, letto dal contatore in navbar.
+ * Ritorna null se il contatore non è presente (es. carrello vuoto: Esselunga
+ * nasconde il link quando la quantità è 0).
+ */
+export function pageCartCount(sel) {
+  for (const s of sel.cartCount) {
+    const el = document.querySelector(s);
+    if (el) {
+      const n = parseInt((el.textContent || "").replace(/\D+/g, ""), 10);
+      if (!Number.isNaN(n)) return n;
+    }
+  }
+  return null;
+}
+
+/**
+ * true se l'aggiunta risulta avvenuta.
+ * Usa il CONTATORE del carrello (persistente) e non il toast: quest'ultimo
+ * sparisce dopo pochi istanti, causando falsi "non confermato".
+ * `before` è il conteggio letto prima del click (può essere null = carrello vuoto).
+ */
+export function pageAddConfirmed(sel, before) {
+  for (const s of sel.cartCount) {
+    const el = document.querySelector(s);
+    if (el) {
+      const n = parseInt((el.textContent || "").replace(/\D+/g, ""), 10);
+      if (!Number.isNaN(n)) return before == null ? n > 0 : n > before;
+    }
+  }
+  // Nessun contatore: ripiego sul toast, se per caso è ancora visibile.
+  const t = document.querySelector("#actionFeedback");
+  return t ? !t.classList.contains("ng-hide") : false;
 }
 
 /**

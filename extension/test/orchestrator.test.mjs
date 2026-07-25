@@ -57,7 +57,9 @@ async function loadBackground({ loggedIn = true, addStatus = "added", confirmed 
       executeScript: async ({ func }) => {
         const src = func.toString();
         if (src.includes("loginButtons")) return [{ result: loggedIn }];
-        if (src.includes("addFeedback") && src.includes("ng-hide")) return [{ result: confirmed }];
+        if (src.includes("before == null")) return [{ result: confirmed }];   // pageAddConfirmed
+        if (src.includes("cartCount") && !src.includes("before")) return [{ result: 0 }]; // pageCartCount
+        if (src.includes("cartIcon")) return [{ result: true }];              // pageOpenCart
         if (src.includes("addButtonGuesses")) return [{ result: { url: "x", addBtn: null } }];
         return [{ result: { status: addStatus } }];
       },
@@ -107,12 +109,14 @@ const waitTerminal = (st) =>
   check("T1b tutti e 3 i prodotti aggiunti", () => assert.equal(st.progress.added, 3));
   check("T1c apre le 3 schede prodotto", () =>
     PLAN.items.forEach((it) => assert.ok(st.navigations.includes(it.product_url))));
-  check("T1d tenta di aprire il carrello alla fine (click icona)", () =>
-    // Non esiste un URL carrello stabile: l'ultima azione e' il click sull'icona,
-    // quindi l'ultima navigazione resta l'ultima scheda prodotto.
-    assert.ok(st.navigations[st.navigations.length - 1].includes("/p/")));
-  check("T1e nessun checkout automatico", () =>
-    assert.ok(!st.navigations.some((u) => /checkout|pagamento|ordine\/conferma/i.test(u))));
+  check("T1d apre il carrello alla fine", () =>
+    assert.ok(st.navigations[st.navigations.length - 1].includes("trolley")));
+  check("T1e nessun pagamento/invio ordine automatico", () =>
+    // NB: il carrello Esselunga vive sotto /checkout/trolley: e' il CARRELLO,
+    // non il pagamento. Vietati sono i passi successivi (pagamento, conferma,
+    // scelta slot/consegna finale), che restano sempre atti umani.
+    assert.ok(!st.navigations.some((u) =>
+      /pagament|payment|conferma[-\/]?ordine|place[-_]?order|riepilogo[-\/]?ordine/i.test(u))));
   check("T1f messaggio finale con conteggio", () =>
     assert.match(st.progress.message, /Aggiunti 3\/3/));
 }
