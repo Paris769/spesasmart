@@ -13,6 +13,7 @@ import {
   RecurringList,
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { DEFAULT_LOCATION } from "@/lib/location";
 import LocationBar from "@/components/ui/LocationBar";
 import PurchasePlan from "@/components/ui/PurchasePlan";
 import ProductPicker from "@/components/ui/ProductPicker";
@@ -47,7 +48,8 @@ const PLAN_STRATEGIES: { key: PlanStrategy; label: string; Icon: typeof Coins; h
 
 const EMAIL_KEY = "spesasmart_email";
 const LOCAL_LISTS_KEY = "spesasmart_recurring_local";
-const DEFAULT_LOCATION = { lat: 45.4642, lng: 9.19, label: "Milano" };
+// Posizione di ripiego condivisa con ProductPicker (vedi lib/location.ts):
+// ricerca e piano devono guardare la STESSA area.
 
 type EditableItem = {
   uid: string;
