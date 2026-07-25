@@ -211,6 +211,22 @@ export interface QuickStoreItem {
 /** Strategia di ottimizzazione del piano carrello (Fase 1 auto-carrello). */
 export type PlanStrategy = "cheapest" | "fewest_stores" | "availability";
 
+/**
+ * Invia il piano di un negozio all'estensione browser (Fase 2 auto-carrello),
+ * via postMessage sulla stessa origine. Se l'estensione non è installata non
+ * accade nulla (il chiamante gestisce il timeout/ack). Nessuna credenziale
+ * transita: l'estensione agisce sulla sessione già autenticata dell'utente.
+ */
+export interface ExtensionCartPlan {
+  chain_slug?: string | null;
+  chain_name: string;
+  items: { product_name: string; product_url: string | null; quantity: number }[];
+}
+export function sendPlanToExtension(payload: ExtensionCartPlan) {
+  if (typeof window === "undefined") return;
+  window.postMessage({ source: "spesasmart", type: "CART_PLAN", payload }, window.location.origin);
+}
+
 export interface QuickStore {
   store_id: string;
   store_name: string;

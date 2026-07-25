@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { color-scheme: light dark; }
+      body { width: 300px; margin: 0; font: 13px/1.4 system-ui, sans-serif; padding: 14px; }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      .sub { color: #78716c; margin: 0 0 12px; font-size: 12px; }
+      .bar { height: 8px; border-radius: 99px; background: #e7e5e4; overflow: hidden; margin: 8px 0; }
+      .fill { height: 100%; background: #16a34a; width: 0%; transition: width .3s; }
+      .msg { padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+      .msg.info { background: #ecfdf3; color: #15803d; }
+      .msg.warn { background: #fffbeb; color: #b45309; }
+      ul { list-style: none; padding: 0; margin: 10px 0 0; max-height: 180px; overflow: auto; }
+      li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid #f5f5f4; }
+      .ok { color: #16a34a; } .no { color: #dc2626; }
+      button { margin-top: 10px; width: 100%; padding: 8px; border: 0; border-radius: 8px; background: #f5f5f4; font-weight: 600; cursor: pointer; }
+      .foot { margin-top: 10px; font-size: 11px; color: #a8a29e; }
+    </style>
+  </head>
+  <body>
+    <h1>SpesaSmart · Auto-carrello</h1>
+    <p class="sub">Riempie il carrello sul sito dov'è la tua sessione. Il pagamento resta a te.</p>
+    <div id="content"><p class="sub">Nessun piano in corso. Apri SpesaSmart → Lista → "Riempi il carrello".</p></div>
+    <button id="reset">Azzera stato</button>
+    <p class="foot">Le credenziali non vengono mai lette né salvate dall'estensione.</p>
+    <script src="popup.js"></script>
+  </body>
+</html>

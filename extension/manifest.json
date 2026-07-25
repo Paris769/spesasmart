@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "SpesaSmart — Auto-carrello",
+  "version": "0.1.0",
+  "description": "Riempie automaticamente il carrello del supermercato con i prodotti del tuo piano SpesaSmart. Le credenziali restano sul tuo dispositivo: le inserisci tu sul sito ufficiale, l'estensione non le legge ne le salva.",
+  "permissions": ["scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://www.esselunga.it/*",
+    "https://spesaonline.esselunga.it/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "SpesaSmart Auto-carrello" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://spesasmart-seven.vercel.app/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["bridge.content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
