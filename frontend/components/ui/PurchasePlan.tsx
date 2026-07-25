@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { QuickOptimizeResult, outbound } from "@/lib/api";
+import { QuickOptimizeResult, outbound, sendPlanToExtension } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG, minSpendLabel } from "@/lib/retailServices";
 import {
   ArrowRight,
@@ -125,6 +125,9 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
   const [mode, setMode] = useState<StrategyMode | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [done, setDone] = useState<Set<string>>(new Set());
+  // Stato invio piano all'estensione auto-carrello, per negozio:
+  // "sent" = inviato, "ack" = presa in carico, "noext" = estensione non rilevata.
+  const [extState, setExtState] = useState<Record<string, "sent" | "ack" | "noext">>({});
 
   // Le chiavi degli item sono per indice (s-0, m-0-1): dopo un ricalcolo del
   // piano spunte e conferme del result precedente vanno azzerate.
@@ -133,7 +136,24 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
     setMode(null);
     setConfirmed(false);
     setDone(new Set());
+    setExtState({});
   }, [result]);
+
+  // Ascolta l'ACK dell'estensione (bridge sulla stessa origine).
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== window || e.origin !== window.location.origin) return;
+      if (e.data?.source === "spesasmart-ext" && e.data.type === "CART_PLAN_ACK") {
+        setExtState((prev) => {
+          const next = { ...prev };
+          for (const k in next) if (next[k] === "sent") next[k] = "ack";
+          return next;
+        });
+      }
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
 
   if (!single.length) return null;
 
@@ -163,6 +183,26 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
     setMode(null);
     setConfirmed(false);
     setDone(new Set());
+  };
+
+  // Invia il piano del negozio all'estensione auto-carrello. Se entro 1.5s non
+  // arriva l'ACK, segnala che l'estensione non è installata.
+  const fillCart = (s: PlanStore) => {
+    setExtState((p) => ({ ...p, [s.key]: "sent" }));
+    sendPlanToExtension({
+      chain_slug: s.chain_slug,
+      chain_name: s.chain_name,
+      items: s.items
+        .filter((it) => it.product_url)
+        .map((it) => ({
+          product_name: it.product_name,
+          product_url: it.product_url,
+          quantity: it.quantity,
+        })),
+    });
+    window.setTimeout(() => {
+      setExtState((prev) => (prev[s.key] === "sent" ? { ...prev, [s.key]: "noext" } : prev));
+    }, 1500);
   };
 
   return (
@@ -478,6 +518,35 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                   >
                     Accedi e avvia carrello {s.chain_name} <ArrowRight size={15} />
                   </a>
+                )}
+
+                {/* Riempimento automatico via estensione (pilota: Esselunga).
+                    Le credenziali le hai inserite TU sul sito: l'estensione
+                    agisce sulla tua sessione, non le legge né le salva. */}
+                {confirmed && s.chain_slug === "esselunga" && (
+                  <div className="border-t border-stone-100">
+                    <button
+                      onClick={() => fillCart(s)}
+                      className="w-full flex items-center justify-center gap-1.5 bg-deep text-white text-sm font-semibold py-2.5 active:scale-[0.99] transition"
+                    >
+                      🧩 Riempi il carrello automaticamente
+                    </button>
+                    {extState[s.key] === "sent" && (
+                      <p className="px-3 py-2 text-[12px] text-stone-500 bg-surface">Invio all&apos;estensione…</p>
+                    )}
+                    {extState[s.key] === "ack" && (
+                      <p className="px-3 py-2 text-[12px] text-green-700 bg-green-50">
+                        Inviato: sto aggiungendo i prodotti nella tua sessione {s.chain_name}. Apri l&apos;icona
+                        dell&apos;estensione per il progresso. Il pagamento resta a te.
+                      </p>
+                    )}
+                    {extState[s.key] === "noext" && (
+                      <p className="px-3 py-2 text-[12px] text-amber-700 bg-amber-50">
+                        Estensione non rilevata: installa l&apos;estensione SpesaSmart per il riempimento
+                        automatico, oppure usa &quot;Inserisci&quot; qui sopra.
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             ))}

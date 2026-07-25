@@ -193,8 +193,16 @@ smette di funzionare.
   per ogni voce e rimanda `recommended_plan` + `in_stock_count`. Nella tab Lista
   c'è il selettore di filtro; il piano si ricalcola al cambio strategia; gli
   articoli esauriti sono marcati "esaurito". Nessuna credenziale coinvolta.
-- **Fase 2 — da avviare**: scheletro estensione MV3 + `CartAdapter` per Esselunga,
-  subordinata alla revisione legale del punto 2.
+- **Fase 2 — SCAFFOLD FATTO** (2026-07-24): estensione MV3 in `extension/`
+  (`manifest`, `background` orchestratore, `adapters/esselunga.js`,
+  `bridge.content.js`, popup). La web app invia il piano del negozio
+  all'estensione (`sendPlanToExtension` → `PurchasePlan`, pulsante "Riempi il
+  carrello automaticamente", solo Esselunga). L'estensione, sulla **sessione già
+  loggata dall'utente**, apre le schede prodotto e clicca "aggiungi al carrello";
+  il checkout resta umano. **Gate residui prima dell'uso reale**: (1) revisione
+  legale ToS Esselunga; (2) verifica/aggiornamento dei `SELECTORS` sul sito reale
+  loggato. Fino ad allora è un pilota installabile "unpacked" (vedi
+  `extension/README.md`). Nessuna credenziale letta o salvata.
 
 ## 10. Cosa posso costruire vs cosa no
 
