@@ -118,7 +118,13 @@ async function runPlan(payload) {
   }
 
   // 3) Fine: apri il carrello per la revisione UMANA. Nessun checkout automatico.
-  await chrome.tabs.update(tabId, { url: adapter.meta.cartUrl, active: true });
+  // Preferiamo il click sull'icona (non esiste un URL carrello stabile); se
+  // manca, restiamo dove siamo: i prodotti sono comunque nel carrello.
+  if (adapter.meta.cartUrl) {
+    await chrome.tabs.update(tabId, { url: adapter.meta.cartUrl, active: true });
+  } else {
+    await inPage(tabId, esselunga.pageOpenCart, [esselunga.SELECTORS]).catch(() => false);
+  }
   const added = results.filter((r) => r.status === "added").length;
   await setProgress({
     state: "done",

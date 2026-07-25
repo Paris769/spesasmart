@@ -20,7 +20,11 @@ export const meta = {
   name: "Esselunga",
   hosts: ["www.esselunga.it", "spesaonline.esselunga.it"],
   shopUrl: "https://spesaonline.esselunga.it/commerce/nav/supermercato/store/home",
-  cartUrl: "https://spesaonline.esselunga.it/commerce/nav/auth/spesa/carrello.html",
+  // NB: non esiste un URL carrello stabile e pubblico (quello ipotizzato in
+  // origine rispondeva "Risorsa richiesta non esistente"). A fine run apriamo
+  // il carrello CLICCANDO l'icona in navbar (pageOpenCart); se non c'e',
+  // restiamo sull'ultima pagina senza rompere nulla.
+  cartUrl: null,
 };
 
 /** Selettori ricavati dal DOM reale (verificare nella pagina da loggato). */
@@ -33,6 +37,15 @@ export const SELECTORS = {
     'button[aria-label^="Aggiungi al carrello"]',
     'button[aria-label*="Aggiungi al carrello"]',
     ".esselunga-product-detail-item-right-action-add-to-cart button",
+    // Card prodotto (home/listing): usato se il link porta a un elenco invece
+    // che alla scheda dettaglio.
+    "button.el-product-card-b__add-to-cart-btn",
+  ],
+  // Icona carrello in navbar (visibile da loggati): per aprire il carrello.
+  cartIcon: [
+    ".esselunga-navbar-right-item-list_v2__item__button i.icon-cart-empty",
+    ".esselunga-navbar-right-item-list_v2__item__button i[class*='icon-cart']",
+    "[class*='esselunga-navbar'] [class*='icon-cart']",
   ],
   // Quantità: è un <select> (opzioni 1..N), non un input.
   quantitySelect: [
@@ -102,6 +115,21 @@ export function pageDiagnostics(sel) {
     feedbackPresent: !!document.querySelector("#actionFeedback"),
     addButtonGuesses: guesses,
   };
+}
+
+/**
+ * Apre il carrello cliccando l'icona in navbar (nessun URL fisso: quello
+ * ipotizzato non esiste). Ritorna true se ha trovato e cliccato l'icona.
+ */
+export function pageOpenCart(sel) {
+  for (const s of sel.cartIcon) {
+    const el = document.querySelector(s);
+    if (el) {
+      (el.closest("button") || el.closest("a") || el).click();
+      return true;
+    }
+  }
+  return false;
 }
 
 /** true se il toast di conferma aggiunta è visibile (non ng-hide). */
