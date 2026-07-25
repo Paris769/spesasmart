@@ -68,6 +68,42 @@ export function pageIsLoggedIn(sel) {
   return !!document.querySelector(sel.navbar);
 }
 
+/**
+ * Diagnostica: fotografa cosa c'è (o manca) nella pagina corrente. Serve quando
+ * un'aggiunta fallisce sulla pagina da LOGGATO (che può differire da quella
+ * pubblica): l'utente incolla questo e i selettori si correggono in un colpo.
+ */
+export function pageDiagnostics(sel) {
+  const probe = (list) => {
+    for (const s of list) {
+      const el = document.querySelector(s);
+      if (el) return { matched: s, tag: el.tagName, aria: el.getAttribute("aria-label") || null };
+    }
+    return null;
+  };
+  // Candidati "aggiungi" anche fuori dai selettori noti (per capire come sono
+  // fatti sulla pagina loggata): bottoni con testo/aria "carrello"/"aggiungi".
+  const guesses = [];
+  document.querySelectorAll("button,[role=button]").forEach((el) => {
+    const s = ((el.textContent || "") + " " + (el.getAttribute("aria-label") || "")).toLowerCase();
+    if (/carrello|aggiungi/.test(s) && guesses.length < 6) {
+      guesses.push({
+        tag: el.tagName,
+        aria: (el.getAttribute("aria-label") || "").slice(0, 60),
+        cls: (el.className || "").toString().slice(0, 60),
+      });
+    }
+  });
+  return {
+    url: location.href,
+    title: document.title.slice(0, 80),
+    addBtn: probe(sel.addToCart),
+    qtySelect: probe(sel.quantitySelect),
+    feedbackPresent: !!document.querySelector("#actionFeedback"),
+    addButtonGuesses: guesses,
+  };
+}
+
 /** true se il toast di conferma aggiunta è visibile (non ng-hide). */
 export function pageAddConfirmed(sel) {
   const el = document.querySelector(sel.addFeedback.split(",")[0]) ||

@@ -33,7 +33,14 @@ function render(p) {
     p.state === "done"
       ? `<div class="msg info">${esc(p.message || "")}</div>`
       : `<p class="sub">${esc(p.current ? "In corso: " + p.current : "Preparazione…")}</p>`;
-  c.innerHTML = `${head}<div class="bar"><div class="fill" style="width:${pct}%"></div></div><p class="sub">${done}/${total}</p><ul>${list}</ul>`;
+  // Se qualcosa non è stato aggiunto, mostra la diagnostica copiabile.
+  const diag =
+    p.diag && (p.added || 0) < (p.total || 0)
+      ? `<details style="margin-top:10px"><summary style="cursor:pointer;color:#b45309;font-size:12px">Dettagli per il supporto (copia e incolla in chat)</summary><textarea readonly style="width:100%;height:90px;font-size:10px;margin-top:6px">${esc(
+          JSON.stringify(p.diag, null, 1)
+        )}</textarea></details>`
+      : "";
+  c.innerHTML = `${head}<div class="bar"><div class="fill" style="width:${pct}%"></div></div><p class="sub">${done}/${total}</p><ul>${list}</ul>${diag}`;
 }
 
 chrome.runtime.sendMessage({ type: "GET_PROGRESS" }, (res) => render(res?.progress));
