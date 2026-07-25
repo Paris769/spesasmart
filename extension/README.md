@@ -20,11 +20,30 @@ dell'architettura in [`docs/CART_AUTOMATION_ARCHITECTURE.md`](../docs/CART_AUTOM
 
 ## Stato: PILOTA — cosa manca prima della produzione
 1. **Revisione legale dei ToS Esselunga** sull'automazione della sessione utente
-   (potrebbe vietarla → rischio account). Gate bloccante.
-2. **Verifica dei selettori** in `adapters/esselunga.js` (`SELECTORS`): vanno
-   controllati/aggiornati sul sito reale loggato. Ora sono best-effort e
-   difensivi (se non trovano, ricade sul deep-link manuale).
+   (potrebbe vietarla → rischio account). Gate bloccante. Checklist sotto.
+2. **Verifica dei selettori sulla pagina da LOGGATO**: i `SELECTORS` in
+   `adapters/esselunga.js` sono stati ricavati dal DOM reale della pagina
+   prodotto pubblica (2026-07-24) e la logica è verificata (`test/verify.html`,
+   tutti PASS). Resta da confermare che la pagina da utente autenticato abbia la
+   stessa struttura (il carrello vero è dietro il login).
 3. Gestione robusta delle SPA/navigazioni e dei tempi di caricamento.
+
+### Verifica automatica della logica (senza login)
+`test/verify.html` importa l'adapter reale e lo esegue contro un DOM che replica
+Esselunga. Per lanciarlo: `cd extension && python -m http.server 8099`, poi apri
+`http://localhost:8099/test/verify.html` → deve mostrare **RESULT: ALL PASS**.
+
+### Checklist ToS da far verificare a un legale
+- Il contratto/ToS di Esselunga Spesa Online **vieta l'accesso automatizzato,
+  bot, scraping o strumenti di terze parti**? (cercare "automatizzato", "robot",
+  "software", "terze parti", "uso consentito").
+- È ammesso che **un software agisca sull'account per conto dell'utente**?
+- Ci sono limiti su **frequenza/volume** delle richieste?
+- L'automazione lato client (estensione dell'utente, sulla sua sessione) è
+  trattata diversamente da un bot server-side?
+- Qual è la **conseguenza** di una violazione (sospensione account)?
+Esito atteso: GO (permesso o tollerato per uso personale) / NO-GO (vietato) /
+MEGLIO-PARTNERSHIP (chiedere un accordo/API ufficiale = opzione A).
 
 ## Struttura
 - `manifest.json` — MV3, permessi minimi, host solo Esselunga + SpesaSmart.

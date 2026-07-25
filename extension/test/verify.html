@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Verifica adapter Esselunga</title>
+  </head>
+  <body>
+    <!-- Mock del DOM REALE Esselunga (struttura ricavata dal sito il 2026-07-24). -->
+    <!-- Navbar: bottone "Accedi" presente = utente NON loggato. -->
+    <div class="esselunga-navbar-right-item-list_v2__item">
+      <button class="esselunga-navbar-right-item-list_v2__item__button" aria-label="Accedi">
+        <i class="icon-account"></i>Accedi
+      </button>
+    </div>
+
+    <!-- Dettaglio prodotto: select quantità + bottone aggiungi + toast conferma. -->
+    <div class="esselunga-product-detail-item-right-action-quantita">
+      <select class="esselunga-product-quantity-select" aria-label="Quantità" id="slQta_">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+      </select>
+    </div>
+    <div class="esselunga-product-detail-item-right-action-add-to-cart">
+      <button class="el-btn px-5" aria-label="Aggiungi al carrello Cuore di Farina di Avena 900 g">
+        Aggiungi
+      </button>
+    </div>
+    <div id="actionFeedback" class="carrello-aggiunta esselunga-feedback-toast ng-hide">Aggiunto al carrello</div>
+
+    <pre id="out">running…</pre>
+
+    <script type="module">
+      import { SELECTORS, pageIsLoggedIn, pageAddToCart, pageAddConfirmed } from "../adapters/esselunga.js";
+
+      const log = [];
+      const assert = (name, cond) => log.push((cond ? "PASS" : "FAIL") + " — " + name);
+
+      // Simula il comportamento reale: il click su "Aggiungi" mostra il toast
+      // e registra la quantità scelta nel <select>.
+      let addedQty = null;
+      document
+        .querySelector('button[aria-label^="Aggiungi al carrello"]')
+        .addEventListener("click", () => {
+          addedQty = document.querySelector("select.esselunga-product-quantity-select").value;
+          document.getElementById("actionFeedback").classList.remove("ng-hide");
+        });
+
+      // 1) NON loggato: il bottone "Accedi" è presente.
+      assert("isLoggedIn=false con 'Accedi' presente", pageIsLoggedIn(SELECTORS) === false);
+
+      // 2) Loggato: rimuovo il bottone "Accedi".
+      document.querySelector(".esselunga-navbar-right-item-list_v2__item__button").remove();
+      assert("isLoggedIn=true con 'Accedi' assente", pageIsLoggedIn(SELECTORS) === true);
+
+      // 3) Prima del click il toast è nascosto (ng-hide).
+      assert("conferma=false prima del click", pageAddConfirmed(SELECTORS) === false);
+
+      // 4) addToCart con quantità 3.
+      const r = pageAddToCart(SELECTORS, 3);
+      assert("addToCart ritorna 'added'", r.status === "added");
+      assert("quantità impostata a 3 nel <select>", addedQty === "3");
+
+      // 5) Dopo il click il toast è visibile → conferma true.
+      assert("conferma=true dopo il click", pageAddConfirmed(SELECTORS) === true);
+
+      const allPass = log.every((l) => l.startsWith("PASS"));
+      document.getElementById("out").textContent =
+        log.join("\n") + "\n\nRESULT: " + (allPass ? "ALL PASS" : "SOME FAIL");
+    </script>
+  </body>
+</html>

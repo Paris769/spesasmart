@@ -4,6 +4,7 @@ const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt
 
 const STATUS_IT = {
   added: ["ok", "aggiunto"],
+  unconfirmed: ["no", "da verificare"],
   not_found: ["no", "non trovato"],
   blocked: ["no", "bloccato"],
   error: ["no", "errore"],
