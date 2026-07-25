@@ -53,6 +53,10 @@ def _irrelevant_regex(q: str) -> str:
         "latte": [
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato", r"fiocco", r"fiocchi",
+            # Formaggi il cui nome commerciale inizia con "Latte ..." (es.
+            # "Latte Montagna Alto Adige Stelvio DOP"): non sono latte.
+            r"stelvio", r"dop", r"formagg[[:alnum:]_]*", r"stagionat[[:alnum:]_]*",
+            r"asiago", r"fontina", r"caciotta", r"toma",
         ],
         "acqua": [r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
         "pasta": [r"bris.e", r"sfoglia", r"frolla", r"pizza", r"lievitat[[:alnum:]_]*", r"raviol[[:alnum:]_]*", r"tortell[[:alnum:]_]*", r"cappellett[[:alnum:]_]*", r"gnocch[[:alnum:]_]*", r"ripien[[:alnum:]_]*", r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*", r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],

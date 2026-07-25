@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Test bridge web app ↔ estensione</title>
+    <style>
+      body { font: 13px/1.5 system-ui, sans-serif; padding: 16px; }
+      pre { background: #f5f5f4; padding: 12px; border-radius: 8px; white-space: pre-wrap; }
+      .pass { color: #15803d; } .fail { color: #dc2626; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <h1>Test bridge — web app ↔ estensione</h1>
+    <p>Verifica il contratto di messaggi e il filtro di sicurezza sull'origine.</p>
+    <pre id="out">running…</pre>
+
+    <script>
+      // ── chrome.runtime simulato: registra i messaggi inoltrati al worker.
+      const forwarded = [];
+      window.chrome = {
+        runtime: {
+          sendMessage: (msg, cb) => {
+            forwarded.push(msg);
+            if (cb) setTimeout(cb, 0);
+          },
+        },
+      };
+      // Traccia i messaggi che il bridge rimanda alla pagina (ACK / EXT_PRESENT).
+      const toPage = [];
+      window.addEventListener("message", (e) => {
+        if (e.data && e.data.source === "spesasmart-ext") toPage.push(e.data.type);
+      });
+    </script>
+    <!-- Il bridge REALE, quello che gira sulle pagine SpesaSmart. -->
+    <script src="../bridge.content.js"></script>
+
+    <script>
+      const log = [];
+      const assert = (name, cond) => log.push({ name, ok: !!cond });
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      const PLAN = {
+        chain_slug: "esselunga",
+        chain_name: "Esselunga",
+        items: [{ product_name: "Latte", product_url: "https://spesaonline.esselunga.it/p/1", quantity: 1 }],
+      };
+
+      (async () => {
+        await wait(50);
+        // T1: il bridge annuncia la propria presenza alla web app.
+        assert("T1 annuncia EXT_PRESENT alla pagina", toPage.includes("EXT_PRESENT"));
+
+        // T2: un piano legittimo viene inoltrato al service worker.
+        window.postMessage({ source: "spesasmart", type: "CART_PLAN", payload: PLAN }, window.location.origin);
+        await wait(60);
+        assert("T2a piano inoltrato al worker", forwarded.length === 1);
+        assert("T2b tipo messaggio corretto", forwarded[0]?.type === "CART_PLAN");
+        assert("T2c payload integro (catena)", forwarded[0]?.payload?.chain_slug === "esselunga");
+        assert("T2d payload integro (prodotti)", forwarded[0]?.payload?.items?.length === 1);
+        assert("T2e ACK rimandato alla pagina", toPage.includes("CART_PLAN_ACK"));
+
+        // T3: SICUREZZA — messaggi con source estraneo vengono ignorati.
+        const before = forwarded.length;
+        window.postMessage({ source: "evil-site", type: "CART_PLAN", payload: PLAN }, window.location.origin);
+        await wait(60);
+        assert("T3a ignora messaggi con source estraneo", forwarded.length === before);
+
+        // T4: SICUREZZA — tipo di messaggio sconosciuto ignorato.
+        window.postMessage({ source: "spesasmart", type: "RUN_CHECKOUT", payload: PLAN }, window.location.origin);
+        await wait(60);
+        assert("T4a ignora tipi di messaggio non previsti", forwarded.length === before);
+
+        // T5: SICUREZZA — nessuna credenziale nel payload inoltrato.
+        const raw = JSON.stringify(forwarded);
+        assert("T5a nessun campo password/token nel payload",
+          !/password|passwd|token|credential|cookie/i.test(raw));
+
+        const failed = log.filter((l) => !l.ok);
+        document.getElementById("out").innerHTML =
+          log.map((l) => `<span class="${l.ok ? "pass" : "fail"}">${l.ok ? "PASS" : "FAIL"} — ${l.name}</span>`).join("\n") +
+          `\n\nRESULT: ${failed.length === 0 ? "ALL PASS" : failed.length + " FAILED"} (${log.length} test)`;
+      })();
+    </script>
+  </body>
+</html>

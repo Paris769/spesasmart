@@ -53,9 +53,14 @@ def _irrelevant_regex(q: str) -> str:
             r"senza peccato", r"crema di", r"zuppalatte", r"colussi", r"cereali", r"orzo",
             r"biscott[[:alnum:]_]*", r"liquore", r"estratto", r"cacao", r"amaro",
         ],
-        "latte": [r"panna", r"dessert", 
+        "latte": [r"panna", r"dessert",
             r"detergente", r"corpo", r"crema", r"bagnoschiuma", r"pan", r"biscott",
             r"gelat", r"yogurt", r"kefir", r"cioccolat", r"macchiato", r"fiocco", r"fiocchi",
+            # Formaggi il cui nome commerciale INIZIA con "Latte ..." (es. "Latte
+            # Montagna Alto Adige Stelvio DOP", ~20 EUR): il match testuale li
+            # prendeva come latte, falsando il piano.
+            r"stelvio", r"dop", r"formagg[[:alnum:]_]*", r"stagionat[[:alnum:]_]*",
+            r"asiago", r"fontina", r"caciotta", r"toma",
         ],
         "acqua": [r"bibita", r"energy drink", r"red bull", r"fruity", r"aromatizzat[[:alnum:]_]*", r"limone", r"micellare", r"profumo", r"detergente", r"colonia", r"ossigenata", r"patch", r"hydrogel", r"contorno occhi", r"peonia", r"mask", r"demineralizzat[[:alnum:]_]*", r"bagnodoccia", r"doccia", r"shampoo", r"cetriolo"],
         "pasta": [r"bris.e", r"sfoglia", r"frolla", r"pizza", r"lievitat[[:alnum:]_]*", r"raviol[[:alnum:]_]*", r"tortell[[:alnum:]_]*", r"cappellett[[:alnum:]_]*", r"gnocch[[:alnum:]_]*", r"ripien[[:alnum:]_]*", r"pappa", r"pastina", r"lasagn[[:alnum:]_]*", r"cannellon[[:alnum:]_]*", r"dentifric[[:alnum:]_]*", r"placca", r"carie", r"antitartaro", r"collutor[[:alnum:]_]*", r"capitano"],
