@@ -39,7 +39,11 @@ Due suite, entrambe da tenere verdi:
    cd extension && python -m http.server 8099
    # apri http://localhost:8099/test/verify.html  → RESULT: ALL PASS
    ```
-2. **Orchestratore end-to-end** (17 test) — `test/orchestrator.test.mjs` simula le
+2. **Bridge web app ↔ estensione** (9 test) — `test/bridge.test.html`: inoltro
+   del piano, ACK, e le protezioni (ignora messaggi da origini/tipi estranei,
+   nessuna credenziale nel payload). Stesso server: apri
+   `http://localhost:8099/test/bridge.test.html`.
+3. **Orchestratore end-to-end** (17 test) — `test/orchestrator.test.mjs` simula le
    API di Chrome e verifica l'intero flusso: piano → login → apertura schede →
    aggiunta → conferma → carrello, più i vincoli di sicurezza (nessun checkout
    automatico, stop se non loggato, nessun "aggiunto" senza conferma, permessi
