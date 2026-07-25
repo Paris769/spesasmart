@@ -542,7 +542,10 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         "recommended_plan": recommended,
         "in_stock_count": in_stock_count,
         "best_single": best_single,
-        "single_ranking": chain_ranking[:6],
+        # Tutte le catene disponibili (sono una decina): il confronto completo e'
+        # piu' utile, e soprattutto non taglia fuori catene che coprono poche
+        # voci ma servono comunque all'utente (es. per l'auto-carrello).
+        "single_ranking": chain_ranking[:12],
         "multi_store": {
             "total": multi_total,
             "stores": sorted(multi_by_store.values(), key=lambda s: -s["subtotal"]),
