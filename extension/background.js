@@ -31,14 +31,18 @@ function awaitTabComplete(tabId, timeoutMs = 20000) {
 }
 
 async function findOrCreateTab(hosts, shopUrl) {
-  const tabs = await chrome.tabs.query({});
-  const existing = tabs.find((t) => t.url && hosts.some((h) => t.url.includes(h)));
-  if (existing) {
-    await chrome.tabs.update(existing.id, { active: true });
-    return existing.id;
-  }
+  // Usiamo la scheda ATTIVA solo se è già sulla catena giusta; altrimenti ne
+  // creiamo una NUOVA. Prima riusavamo una qualsiasi scheda del sito trovata
+  // nel browser: con molte schede aperte si finiva a lavorare su una vecchia
+  // (magari in un'altra finestra o con la pagina non caricata) e l'aggiunta
+  // falliva silenziosamente.
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active?.url && hosts.some((h) => active.url.includes(h))) return active.id;
+
   const created = await chrome.tabs.create({ url: shopUrl, active: true });
   await awaitTabComplete(created.id);
+  // La SPA di Esselunga completa il rendering dopo il "complete".
+  await new Promise((r) => setTimeout(r, 1500));
   return created.id;
 }
 
@@ -64,11 +68,22 @@ async function runPlan(payload) {
     return;
   }
 
+  await setProgress({ state: "running", chain: adapter.meta.name, total: items.length, done: 0,
+    current: "apro il sito…" });
   const tabId = await findOrCreateTab(adapter.meta.hosts, adapter.meta.shopUrl);
 
   // 1) Login: lo fa l'UTENTE. Se non risulta loggato, ci fermiamo e glielo diciamo.
   await awaitTabComplete(tabId, 8000);
-  const logged = await inPage(tabId, esselunga.pageIsLoggedIn, [esselunga.SELECTORS]).catch(() => false);
+  await setProgress({ state: "running", chain: adapter.meta.name, total: items.length, done: 0,
+    current: "controllo la sessione…" });
+  const logged = await inPage(tabId, esselunga.pageIsLoggedIn, [esselunga.SELECTORS]).catch((e) => {
+    return { __err: String(e).slice(0, 120) };
+  });
+  if (logged && logged.__err) {
+    await setProgress({ state: "error", chain: adapter.meta.name,
+      message: "Non riesco a leggere la pagina Esselunga: " + logged.__err });
+    return;
+  }
   if (!logged) {
     await chrome.tabs.update(tabId, { url: adapter.meta.shopUrl, active: true });
     await setProgress({
