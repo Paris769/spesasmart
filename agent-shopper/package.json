@@ -1,0 +1,14 @@
+{
+  "name": "spesasmart-agent-shopper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agente autonomo locale: prende la lista, calcola il piano e riempie il carrello del supermercato usando un browser reale. Le credenziali restano nel profilo browser locale; il pagamento resta all'utente.",
+  "scripts": {
+    "shop": "node shopper.mjs",
+    "login": "node shopper.mjs --login"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}
