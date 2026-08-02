@@ -40,16 +40,49 @@ export const SEL = {
   ],
 };
 
-/** true se la sessione del browser risulta autenticata. */
-export async function isLoggedIn(page) {
+/**
+ * Stato della sessione: "logged" | "guest" | "unknown".
+ *
+ * Serve un segnale POSITIVO di login (il saluto "Ciao, <nome>" o una voce
+ * dell'area utente): la sola assenza del bottone "Accedi" non basta, perché
+ * finché la SPA non ha renderizzato la navbar nessun bottone è presente e si
+ * finirebbe per credersi connessi quando non lo si è (falso positivo osservato).
+ */
+export async function loginState(page) {
   return page.evaluate((sel) => {
+    const navbar = document.querySelector(sel.navbar);
+    const testo = navbar ? navbar.textContent || "" : "";
+    // Segnale positivo: saluto o voci dell'area utente.
+    if (/ciao[,\s]/i.test(testo)) return "logged";
+    if (document.querySelector("[href*='logout'], [href*='account/dashboard']")) return "logged";
+    // Segnale negativo: bottone "Accedi" renderizzato.
     let accedi = false;
     document.querySelectorAll(sel.loginButtons).forEach((b) => {
       const t = ((b.textContent || "") + " " + (b.getAttribute("aria-label") || "")).toLowerCase();
       if (t.includes("accedi")) accedi = true;
     });
-    return !accedi && !!document.querySelector(sel.navbar);
+    if (accedi) return "guest";
+    return "unknown"; // pagina non ancora renderizzata: non decidere
   }, SEL);
+}
+
+/** true solo con conferma positiva della sessione. */
+export async function isLoggedIn(page) {
+  return (await loginState(page)) === "logged";
+}
+
+/**
+ * Attende che la scheda prodotto sia realmente utilizzabile.
+ * Serve perché addToCart gira dentro page.evaluate, che NON ha l'attesa
+ * automatica dei locator Playwright: senza questo gate, su rete lenta il
+ * bottone non è ancora nel DOM e il prodotto verrebbe saltato come
+ * "non trovato" pur essendo perfettamente disponibile.
+ */
+export async function waitReady(page, timeout = 20000) {
+  return page
+    .waitForSelector(SEL.addToCart.join(","), { state: "attached", timeout })
+    .then(() => true)
+    .catch(() => false);
 }
 
 /** Numero articoli nel carrello (null se il contatore non è presente). */

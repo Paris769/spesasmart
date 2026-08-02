@@ -34,6 +34,23 @@ node shopper.mjs --lat 45.36 --lng 9.69 "pane"   # posizione esplicita
 node shopper.mjs --radius 30 "olio, riso"        # raggio di ricerca in km
 ```
 
+## Cosa ti dice l'agente (trasparenza)
+
+Prima di toccare il carrello l'agente dichiara sempre:
+- **la zona** interrogata e il raggio (se non passi `--lat/--lng` usa Milano e te lo dice);
+- **quante voci della TUA lista** finiranno davvero in quel carrello, ed elenca
+  quelle che restano fuori (disponibili in altre catene, o introvabili).
+
+Se la catena copre **meno della metà** della lista si ferma e chiede conferma
+(`--anche-parziale`): meglio dirtelo che riempirti mezzo carrello in silenzio.
+
+## Dove vive la sessione
+
+Il profilo browser (che contiene i cookie di sessione) sta in
+`%LOCALAPPDATA%\SpesaSmartrowser-profile` — **fuori** da OneDrive, per non
+sincronizzare le tue credenziali di sessione sul cloud. Puoi cambiarlo con la
+variabile d'ambiente `SPESASMART_PROFILE`.
+
 ## Sicurezza — per costruzione
 - **Le credenziali non passano dall'agente**: le inserisci tu nel browser e
   restano nel profilo locale sul tuo computer. Il codice non le legge né le salva.
