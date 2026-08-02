@@ -47,7 +47,7 @@ Se la catena copre **meno della metà** della lista si ferma e chiede conferma
 ## Dove vive la sessione
 
 Il profilo browser (che contiene i cookie di sessione) sta in
-`%LOCALAPPDATA%\SpesaSmartrowser-profile` — **fuori** da OneDrive, per non
+`%LOCALAPPDATA%/SpesaSmart/browser-profile` — **fuori** da OneDrive, per non
 sincronizzare le tue credenziali di sessione sul cloud. Puoi cambiarlo con la
 variabile d'ambiente `SPESASMART_PROFILE`.
 
