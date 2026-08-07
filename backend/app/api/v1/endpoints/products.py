@@ -251,15 +251,18 @@ async def search_products(
         params["category_id"] = category_id
 
     # Filtro geografico opzionale per il prezzo mostrato nei risultati.
-    # I negozi virtuali della spesa online (external_id '*-online') sono
-    # nazionali: restano sempre visibili. Il filtro (area disegnata, oppure
-    # raggio) si applica solo ai punti vendita fisici (click & collect).
-    price_geo = ""
+    # I negozi della spesa online sono nazionali, ma entrano solo se la loro
+    # catena serve davvero questa zona (vedi core/geo_coverage): senza questo
+    # controllo un utente in Sardegna vedeva prezzi Esselunga a 500 km.
+    # NB: il frammento è inserito in due sottoquery dove le catene hanno alias
+    # DIVERSI (cx e ch), quindi lo generiamo per alias.
+    price_geo_tpl = ""
     area_wkt = _parse_area_wkt(area)
     if area_wkt:
-        price_geo = """
+        price_geo_tpl = """
               AND (
-                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
+                    (s.external_id LIKE '%-online'
+                     AND NOT ({CH}.slug = ANY(string_to_array(:no_online, ','))))
                     OR ST_Contains(
                          ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
                          s.coordinates
@@ -267,9 +270,10 @@ async def search_products(
                   )"""
         params["area_wkt"] = area_wkt
     elif lat is not None and lng is not None:
-        price_geo = """
+        price_geo_tpl = """
               AND (
-                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
+                    (s.external_id LIKE '%-online'
+                     AND NOT ({CH}.slug = ANY(string_to_array(:no_online, ','))))
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,
@@ -279,6 +283,9 @@ async def search_products(
         params["lat"] = lat
         params["lng"] = lng
         params["radius_m"] = radius_km * 1000
+
+    price_geo_cx = price_geo_tpl.format(CH="cx")
+    price_geo_ch = price_geo_tpl.format(CH="ch")
 
     where = " AND ".join(filters)
 
@@ -379,7 +386,7 @@ async def search_products(
                       AND x.price >= :min_valid_price
                       AND {fresh_stats}
                       AND s.is_active = TRUE
-                      {price_geo}
+                      {price_geo_cx}
                 ) stats
                 LEFT JOIN LATERAL (
                     SELECT x.price,
@@ -398,7 +405,7 @@ async def search_products(
                       AND x.price >= :min_valid_price
                       AND {fresh_best}
                       AND s.is_active = TRUE
-                      {price_geo}
+                      {price_geo_ch}
                     ORDER BY x.in_stock DESC, x.price ASC
                     LIMIT 1
                 ) best ON TRUE
