@@ -259,7 +259,7 @@ async def search_products(
     if area_wkt:
         price_geo = """
               AND (
-                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
+                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
                     OR ST_Contains(
                          ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
                          s.coordinates
@@ -269,7 +269,7 @@ async def search_products(
     elif lat is not None and lng is not None:
         price_geo = """
               AND (
-                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
+                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,
@@ -457,14 +457,14 @@ async def get_product_prices(
                     "no_online": unavailable_online_chains(lat, lng)}
     area_wkt = _parse_area_wkt(area)
     if area_wkt:
-        geo_filter = """(s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
+        geo_filter = """(s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
                     OR ST_Contains(
                          ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
                          s.coordinates
                        )"""
         params["area_wkt"] = area_wkt
     else:
-        geo_filter = """(s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
+        geo_filter = """(s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,

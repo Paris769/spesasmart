@@ -100,22 +100,27 @@ def online_store_sql(chain_alias: str = "c") -> str:
     Frammento SQL da usare al posto del nudo `s.external_id LIKE '%-online'`.
 
     Un negozio online entra nei risultati solo se la sua catena serve davvero la
-    zona dell'utente. Richiede il bind param `no_online` (lista di slug).
+    zona dell'utente. Richiede il bind param `no_online`, che è una STRINGA di
+    slug separati da virgola (vedi `unavailable_online_chains`): passare una
+    lista Python a un cast `text[]` non funziona con questo driver.
     """
     return (
         f"(s.external_id LIKE '%-online' "
-        f"AND NOT ({chain_alias}.slug = ANY(CAST(:no_online AS text[]))))"
+        f"AND NOT ({chain_alias}.slug = ANY(string_to_array(:no_online, ','))))"
     )
 
 
-def unavailable_online_chains(lat: Optional[float], lng: Optional[float]) -> list[str]:
+def unavailable_online_chains(lat: Optional[float], lng: Optional[float]) -> str:
     """
-    Catene con spesa online da NON mostrare per quella posizione.
+    Catene con spesa online da NON mostrare per quella posizione, come stringa
+    "slug1,slug2" pronta per il bind param `no_online` (vedi online_store_sql).
 
     Se la regione non è riconosciuta (coordinate fuori Italia o in mare) non
     filtriamo nulla: meglio mostrare qualcosa in più che nascondere per errore.
     """
     regione = region_for(lat, lng)
     if regione is None:
-        return []
-    return [slug for slug, regioni in ONLINE_COVERAGE.items() if regione not in regioni]
+        return ""
+    return ",".join(
+        slug for slug, regioni in ONLINE_COVERAGE.items() if regione not in regioni
+    )

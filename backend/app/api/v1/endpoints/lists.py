@@ -293,7 +293,7 @@ _QUICK_ITEM_SQL = text(f"""
       AND NOT pr.quarantined
       AND {_FRESH_SQL}
       AND (
-            (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
+            (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
             OR ST_DWithin(
                  s.coordinates::geography,
                  ST_Point(:lng, :lat)::geography,
@@ -342,7 +342,7 @@ _QUICK_ITEM_BY_ID_SQL = text(f"""
       AND {_FRESH_SQL}
       AND p.id = :pid
       AND (
-            (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
+            (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
             OR ST_DWithin(
                  s.coordinates::geography,
                  ST_Point(:lng, :lat)::geography,
