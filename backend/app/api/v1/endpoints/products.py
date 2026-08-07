@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.freshness import fresh_price_sql, stale_price_sql
 from app.db.session import get_db
+from app.core.geo_coverage import unavailable_online_chains
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -241,6 +242,8 @@ async def search_products(
         "candidate_limit": max(500, min(2000, limit * 50)),
         "offset": offset,
         "min_valid_price": MIN_VALID_PRICE,
+        # catene con spesa online che NON servono la zona: escluse dai risultati
+        "no_online": unavailable_online_chains(lat, lng),
     }
 
     if category_id:
@@ -256,7 +259,7 @@ async def search_products(
     if area_wkt:
         price_geo = """
               AND (
-                    s.external_id LIKE '%-online'
+                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
                     OR ST_Contains(
                          ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
                          s.coordinates
@@ -266,7 +269,7 @@ async def search_products(
     elif lat is not None and lng is not None:
         price_geo = """
               AND (
-                    s.external_id LIKE '%-online'
+                    (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,
@@ -450,17 +453,18 @@ async def get_product_prices(
     (se fornita) oppure il raggio. I negozi della spesa online sono
     sempre inclusi (consegna nazionale).
     """
-    params: dict = {"product_id": product_id, "lat": lat, "lng": lng, "min_valid_price": MIN_VALID_PRICE}
+    params: dict = {"product_id": product_id, "lat": lat, "lng": lng, "min_valid_price": MIN_VALID_PRICE,
+                    "no_online": unavailable_online_chains(lat, lng)}
     area_wkt = _parse_area_wkt(area)
     if area_wkt:
-        geo_filter = """s.external_id LIKE '%-online'
+        geo_filter = """(s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
                     OR ST_Contains(
                          ST_MakeValid(ST_GeomFromText(:area_wkt, 4326)),
                          s.coordinates
                        )"""
         params["area_wkt"] = area_wkt
     else:
-        geo_filter = """s.external_id LIKE '%-online'
+        geo_filter = """(s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,

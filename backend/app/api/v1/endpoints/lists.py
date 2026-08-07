@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.freshness import fresh_price_sql
 from app.db.session import get_db
+from app.core.geo_coverage import unavailable_online_chains
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
@@ -292,7 +293,7 @@ _QUICK_ITEM_SQL = text(f"""
       AND NOT pr.quarantined
       AND {_FRESH_SQL}
       AND (
-            s.external_id LIKE '%-online'
+            (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
             OR ST_DWithin(
                  s.coordinates::geography,
                  ST_Point(:lng, :lat)::geography,
@@ -341,7 +342,7 @@ _QUICK_ITEM_BY_ID_SQL = text(f"""
       AND {_FRESH_SQL}
       AND p.id = :pid
       AND (
-            s.external_id LIKE '%-online'
+            (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(CAST(:no_online AS text[]))))
             OR ST_DWithin(
                  s.coordinates::geography,
                  ST_Point(:lng, :lat)::geography,
@@ -374,6 +375,9 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
     strategy = body.strategy if body.strategy in ("cheapest", "fewest_stores", "availability") else "cheapest"
     prefer_stock = strategy == "availability"
     radius_m = body.radius_km * 1000
+    # Catene con spesa online che non servono questa zona (es. Esselunga in
+    # Sardegna): vanno escluse, altrimenti comparirebbero a centinaia di km.
+    no_online = unavailable_online_chains(body.lat, body.lng)
     # stores[sid] = meta + righe per voce; per_item[i] = miglior prezzo globale
     stores: dict[str, dict] = {}
     per_item_best: list[Optional[dict]] = []
@@ -400,6 +404,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             rows = (await db.execute(_QUICK_ITEM_BY_ID_SQL, {
                 "pid": pid_valid,
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
+                "no_online": no_online,
                 "prefer_stock": prefer_stock,
                 **_FRESH_PARAMS,
             })).mappings().all()
@@ -419,6 +424,7 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "q_lower": ql, "q_start": f"{ql} %",
                 "q_mid": f"% {ql} %", "q_end": f"% {ql}",
                 "lat": body.lat, "lng": body.lng, "radius_m": radius_m, "min_valid_price": MIN_VALID_PRICE,
+                "no_online": no_online,
                 "prefer_stock": prefer_stock,
                 **_FRESH_PARAMS,
             })).mappings().all()
