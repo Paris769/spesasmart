@@ -32,6 +32,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -196,12 +197,25 @@ async def run(args: argparse.Namespace) -> None:
         })
         counts[method or "unmatched"] = counts.get(method or "unmatched", 0) + 1
         if pid is None and (item.get("confidence") or 0) >= NEW_PRODUCT_MIN_CONFIDENCE:
+            # Barcode sintetico stabile '<chain>_<code>' (stesso pattern degli
+            # spider); se il feed riporta un EAN-13 reale valido, usa quello
+            # (solo 13 cifre: gli 8 cifre interni possono superare per caso
+            # il check digit GTIN-8).
+            code = item.get("source_code")
+            chain_slug = extracted.get("chain")
+            proposed = None
+            if code:
+                proposed = f"{chain_slug}_{code}"
+                if len(re.sub(r"\D", "", str(code))) == 13:
+                    proposed = canonical_ean(code) or proposed
             new_products.append({
-                "barcode": None,
+                "barcode": proposed,
+                "source_code": code,
                 "name": item.get("name"),
                 "brand": item.get("brand"),
                 "unit_size": item.get("unit_size"),
-                "source": f"flyer_{extracted.get('chain')}",
+                "price": item.get("price"),
+                "source": f"flyer_{chain_slug}",
                 "extraction_confidence": item.get("confidence"),
             })
 

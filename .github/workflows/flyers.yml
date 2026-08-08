@@ -1,0 +1,82 @@
+name: Volantini discount
+
+on:
+  schedule:
+    # Martedì e venerdì alle 05:00 UTC (07:00 CET estivo) — i volantini
+    # Eurospin/MD cambiano su base bisettimanale
+    - cron: "0 5 * * 2,5"
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: "Catena da caricare"
+        required: false
+        default: "all"
+        type: choice
+        options: [all, eurospin, md]
+      dry_run:
+        description: "Dry run (non scrive nel DB)"
+        required: false
+        default: "false"
+        type: boolean
+
+jobs:
+  flyers:
+    name: Volantini ${{ inputs.chain || 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            scraping/requirements.txt
+            scraping/flyers/requirements.txt
+
+      - name: Installa dipendenze
+        run: |
+          pip install -r scraping/requirements.txt
+          pip install -r scraping/flyers/requirements.txt
+
+      - name: Pipeline volantini (fetch → extract → match → load)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +e
+          TODAY=$(date -u +%F)
+          LOAD_FLAGS="--apply --with-new-products"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            LOAD_FLAGS="--with-new-products"
+          fi
+          CHAINS="eurospin md"
+          if [ "${{ inputs.chain || 'all' }}" != "all" ]; then
+            CHAINS="${{ inputs.chain }}"
+          fi
+
+          TOTAL=0
+          FAILED=0
+          for CHAIN in $CHAINS; do
+            TOTAL=$((TOTAL+1))
+            echo "::group::Volantino $CHAIN"
+            if python -m scraping.flyers.fetch --chain "$CHAIN" \
+               && python -m scraping.flyers.extract --chain "$CHAIN" \
+               && python -m scraping.flyers.match "scraping/flyers/out/$CHAIN/$TODAY/extracted.json" \
+               && python -m scraping.flyers.load "scraping/flyers/out/$CHAIN/$TODAY/matched.json" $LOAD_FLAGS; then
+              echo "Volantino $CHAIN completato"
+            else
+              # volantino non disponibile o gate di qualità fallito:
+              # skip con warning, il run non deve fallire
+              echo "::warning::Volantino $CHAIN non disponibile o gate fallito — skip"
+              FAILED=$((FAILED+1))
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "$FAILED" -eq "$TOTAL" ]; then
+            echo "::error::Tutte le catene sono fallite — probabile breakage reale"
+            exit 1
+          fi
+          exit 0

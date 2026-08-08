@@ -5,12 +5,26 @@ Penny exposes the current offer products server-side on /offerte. This spider
 parses the rendered product tiles and stores promotional prices against a
 virtual Penny online/offers store. The catalog is promotional, not the full
 assortment.
+
+Oltre a /offerte, il volantino settimanale vive come categoria HTML
+server-rendered in /categorie/volantino-<data> (stesso formato a tile).
+L'URL cambia a ogni uscita: viene scoperto automaticamente dai link presenti
+su /offerte (fallback: home page). Le sottocategorie del volantino
+(es. -salvaspesa, -prodotti-pennycard) sono sottoinsiemi della categoria
+madre (verificato live), quindi si scrapa solo quella, paginata con ?page=N.
+I tile volantino hanno in più le date di validità
+([data-test='product-price-validity']): i prezzi vengono scritti con
+source='flyer', promo_label 'Volantino Penny -N%' e promo_expires, come
+scraping/flyers/load.py. Un prodotto presente sia in /offerte sia nel
+volantino produce UNA sola riga corrente (vince il volantino, che ha la
+scadenza; i campi mancanti sono completati dalla versione /offerte).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
+from datetime import date
 from typing import Optional
 from urllib.parse import urljoin
 
@@ -26,6 +40,8 @@ BASE_URL = "https://www.penny.it"
 OFFERS_URL = f"{BASE_URL}/offerte"
 CHAIN_SLUG = "penny"
 SOURCE = "penny"
+FLYER_SOURCE = "flyer"          # stesso standard di scraping/flyers/load.py
+MAX_FLYER_PAGES = 15            # cappa la paginazione ?page=N (oggi: 2 pagine)
 STORE_EXTERNAL_ID = "penny-offerte"
 STORE_NAME = "Penny Offerte"
 STORE_CITY = "Cernusco sul Naviglio"
@@ -47,6 +63,12 @@ HEADERS = {
 _PRICE_RE = re.compile(r"(\d+[,.]\d{2})\s*€")
 _ID_RE = re.compile(r"-(\d+)$")
 _WS_RE = re.compile(r"\s+")
+# Link alla categoria volantino, relativo o assoluto (query/fragment esclusi).
+_FLYER_LINK_RE = re.compile(
+    r'href="(?:https?://(?:www\.)?penny\.it)?(/categorie/volantino-[^"?#]+)"'
+)
+# Date di validità nei tile volantino: 'da gio 30.07.2026' / 'a mer 12.08.2026'
+_VALIDITY_DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
 
 
 def _clean_text(value: object) -> str:
@@ -67,9 +89,30 @@ def _first_price(text: str) -> Optional[float]:
     return _price(m.group(1)) if m else None
 
 
+def _strip_query(href: str) -> str:
+    """Rimuove query/fragment: i tile del volantino linkano '...?from=plp'."""
+    return (href or "").split("?", 1)[0].split("#", 1)[0]
+
+
 def _product_id_from_href(href: str) -> str | None:
-    m = _ID_RE.search((href or "").rstrip("/"))
+    m = _ID_RE.search(_strip_query(href).rstrip("/"))
     return m.group(1) if m else None
+
+
+def _parse_validity(item) -> tuple[Optional[date], Optional[date]]:
+    """(valid_from, valid_to) dal blocco validità del tile volantino."""
+    node = item.select_one("[data-test='product-price-validity']")
+    if not node:
+        return None, None
+    dates: list[date] = []
+    for dd, mm, yyyy in _VALIDITY_DATE_RE.findall(node.get_text(" ", strip=True)):
+        try:
+            dates.append(date(int(yyyy), int(mm), int(dd)))
+        except ValueError:
+            continue
+    if not dates:
+        return None, None
+    return dates[0], (dates[-1] if len(dates) > 1 else None)
 
 
 class PennySpider:
@@ -91,23 +134,23 @@ class PennySpider:
             await asyncio.sleep(RATE - elapsed)
         self._t_last = loop.time()
 
-    async def _get_offers(self) -> str | None:
+    async def _get_page(self, url: str) -> str | None:
         await self._throttle()
         for attempt in range(3):
             try:
                 r = await self.client.get(
-                    OFFERS_URL,
+                    url,
                     headers=HEADERS,
                     timeout=45,
                     follow_redirects=True,
                 )
                 if r.status_code == 200:
                     return r.text
-                log.warning("HTTP %s Penny offerte", r.status_code)
+                log.warning("HTTP %s Penny %s", r.status_code, url)
                 if r.status_code in (403, 404):
                     return None
             except httpx.RequestError as exc:
-                log.warning("Tentativo %d errore Penny: %s", attempt + 1, exc)
+                log.warning("Tentativo %d errore Penny %s: %s", attempt + 1, url, exc)
             await asyncio.sleep(2 ** attempt)
         return None
 
@@ -209,6 +252,8 @@ class PennySpider:
                     img_url = src
                     break
 
+            valid_from, valid_to = _parse_validity(item)
+
             products.append({
                 "barcode": f"penny_{product_id}",
                 "name": name,
@@ -218,9 +263,102 @@ class PennySpider:
                 "original_price": original_price,
                 "promo_label": promo_label,
                 "price_per_unit": unit,
-                "product_url": urljoin(BASE_URL, href),
+                "product_url": urljoin(BASE_URL, _strip_query(href)),
+                "source": SOURCE,
+                "promo_expires": None,
+                # solo nei tile volantino; usati per filtrare le promo
+                # non ancora attive o scadute, poi scartati dall'upsert
+                "valid_from": valid_from,
+                "valid_to": valid_to,
             })
         return products
+
+    @staticmethod
+    def _discover_flyer_categories(html: str) -> list[str]:
+        """
+        URL delle categorie volantino correnti trovate nell'HTML (di /offerte
+        o della home). L'URL cambia a ogni uscita (/categorie/volantino-<data>)
+        quindi niente hardcoding. Le sottocategorie (madre + suffisso, es.
+        /categorie/volantino-30-luglio-salvaspesa) sono sottoinsiemi della
+        madre: si tengono solo le categorie "radice".
+        """
+        paths = sorted(set(_FLYER_LINK_RE.findall(html or "")))
+        roots = [
+            p for p in paths
+            if not any(p != q and p.startswith(q + "-") for q in paths)
+        ]
+        return [urljoin(BASE_URL, p) for p in roots]
+
+    @staticmethod
+    def _flyerize(item: dict) -> None:
+        """Adatta un tile volantino allo standard flyer (come flyers/load.py)."""
+        price, orig = item["price"], item.get("original_price")
+        if orig and price and orig > price:
+            pct = round((orig - price) / orig * 100)
+            item["promo_label"] = f"Volantino Penny -{pct}%"
+        else:
+            item["promo_label"] = "Volantino Penny"
+        item["promo_expires"] = item.get("valid_to")
+        item["source"] = FLYER_SOURCE
+
+    async def _scrape_flyer_categories(self, urls: list[str]) -> list[dict]:
+        """Scarica ogni categoria volantino, paginando finché ci sono tile."""
+        today = date.today()
+        items: list[dict] = []
+        seen: set[str] = set()
+        for url in urls:
+            for page in range(1, MAX_FLYER_PAGES + 1):
+                page_url = url if page == 1 else f"{url}?page={page}"
+                html = await self._get_page(page_url)
+                if not html:
+                    break
+                products = self._parse_products(html)
+                if not products:
+                    break
+                kept = 0
+                for p in products:
+                    if p["barcode"] in seen:
+                        continue
+                    if p["valid_from"] and p["valid_from"] > today:
+                        continue  # promo non ancora attiva (volantino futuro)
+                    if p["valid_to"] and p["valid_to"] < today:
+                        continue  # promo scaduta
+                    self._flyerize(p)
+                    seen.add(p["barcode"])
+                    items.append(p)
+                    kept += 1
+                log.info(
+                    "Volantino %s pag.%d: %d tile, %d validi nuovi",
+                    url.rsplit("/", 1)[-1], page, len(products), kept,
+                )
+        return items
+
+    @staticmethod
+    def _merge_items(
+        offer_items: list[dict], flyer_items: list[dict]
+    ) -> tuple[list[dict], int]:
+        """
+        Unione per barcode: stesso prodotto in /offerte e volantino → un solo
+        item (una sola riga corrente per store). Vince la versione volantino
+        (ha promo_expires); i campi che le mancano sono presi da /offerte.
+        """
+        merged: dict[str, dict] = {p["barcode"]: p for p in offer_items}
+        dupes = 0
+        for p in flyer_items:
+            base = merged.get(p["barcode"])
+            if base:
+                dupes += 1
+                filled = False
+                for key in ("brand", "image_url", "original_price",
+                            "price_per_unit"):
+                    if p.get(key) is None and base.get(key) is not None:
+                        p[key] = base[key]
+                        filled = True
+                if filled:
+                    # ricalcola label/expires con l'original_price completato
+                    PennySpider._flyerize(p)
+            merged[p["barcode"]] = p
+        return list(merged.values()), dupes
 
     async def _upsert_products_batch(self, products: list[dict], store_id: str) -> int:
         by_bc: dict[str, dict] = {p["barcode"]: p for p in products if p}
@@ -228,7 +366,16 @@ class PennySpider:
             return 0
         if self.dry_run:
             for p in by_bc.values():
-                log.info("[DRY] %-60s EUR %.2f", p["name"][:60], p["price"])
+                log.info(
+                    "[DRY] %-8s %-55s EUR %.2f%s%s",
+                    p.get("source", SOURCE),
+                    p["name"][:55],
+                    p["price"],
+                    (f" (orig {p['original_price']:.2f})"
+                     if p.get("original_price") else ""),
+                    (f" fino al {p['promo_expires']:%Y-%m-%d}"
+                     if p.get("promo_expires") else ""),
+                )
             return len(by_bc)
 
         barcodes = list(by_bc.keys())
@@ -277,21 +424,22 @@ class PennySpider:
             await self.conn.execute(
                 """INSERT INTO prices
                        (product_id, store_id, price, original_price, promo_label,
-                        price_per_unit, in_stock, is_current, source,
-                        product_url, scraped_at)
-                   SELECT v.id, $2, v.price, v.orig, v.promo, v.ppu,
-                          TRUE, TRUE, $8, v.url, NOW()
+                        promo_expires, price_per_unit, in_stock, is_current,
+                        source, product_url, scraped_at)
+                   SELECT v.id, $2, v.price, v.orig, v.promo, v.expires, v.ppu,
+                          TRUE, TRUE, v.src, v.url, NOW()
                    FROM unnest($1::uuid[], $3::numeric[], $4::numeric[], $5::text[],
-                               $6::numeric[], $7::text[])
-                        AS v(id, price, orig, promo, ppu, url)""",
+                               $6::date[], $7::numeric[], $8::text[], $9::text[])
+                        AS v(id, price, orig, promo, expires, ppu, src, url)""",
                 all_ids,
                 store_id,
                 [by_bc[b]["price"] for b in barcodes],
                 [by_bc[b]["original_price"] for b in barcodes],
                 [by_bc[b]["promo_label"] for b in barcodes],
+                [by_bc[b].get("promo_expires") for b in barcodes],
                 [by_bc[b]["price_per_unit"] for b in barcodes],
+                [by_bc[b].get("source", SOURCE) for b in barcodes],
                 [by_bc[b]["product_url"] for b in barcodes],
-                SOURCE,
             )
         return len(by_bc)
 
@@ -299,12 +447,31 @@ class PennySpider:
         store_id = await self.ensure_store()
         if not store_id:
             return 0
-        html = await self._get_offers()
-        if not html:
+
+        offers_html = await self._get_page(OFFERS_URL)
+        offer_items = self._parse_products(offers_html) if offers_html else []
+
+        # Discovery volantino: link /categorie/volantino-<data> su /offerte
+        # (già scaricata); fallback sulla home se /offerte non li espone più.
+        flyer_urls = self._discover_flyer_categories(offers_html or "")
+        if not flyer_urls:
+            home_html = await self._get_page(f"{BASE_URL}/")
+            flyer_urls = self._discover_flyer_categories(home_html or "")
+        if flyer_urls:
+            log.info("Categorie volantino trovate: %s", ", ".join(flyer_urls))
+        else:
+            log.warning("Nessuna categoria volantino trovata: solo /offerte")
+        flyer_items = await self._scrape_flyer_categories(flyer_urls)
+
+        merged, dupes = self._merge_items(offer_items, flyer_items)
+        if not merged:
             return 0
-        products = self._parse_products(html)
-        total = await self._upsert_products_batch(products, store_id)
-        log.info("=== Penny: %d prezzi upsert ===", total)
+        total = await self._upsert_products_batch(merged, store_id)
+        log.info(
+            "=== Penny: %d prezzi upsert (%d offerte + %d volantino, "
+            "%d in comune) ===",
+            total, len(offer_items), len(flyer_items), dupes,
+        )
         return total
 
     async def run(self) -> None:

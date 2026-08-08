@@ -267,6 +267,13 @@ def _fmt_es_date(raw: str | None) -> str | None:
     return None
 
 
+def _clean_ws(text) -> str | None:
+    """Collassa spazi/nuove righe: i titoli dei feed contengono \\n interni."""
+    if not text:
+        return None
+    return re.sub(r"\s+", " ", str(text)).strip() or None
+
+
 def normalize_eurospin(chain_dir: Path) -> list[dict]:
     items: list[dict] = []
     for path in sorted(chain_dir.glob("products_*.json")):
@@ -278,11 +285,11 @@ def normalize_eurospin(chain_dir: Path) -> list[dict]:
             title = _es_prop(prod, "TITLE") or prod.get("description") or ""
             desc = _es_prop(prod, "DESCRIPTION")
             items.append({
-                "name": str(title).strip().title() or None,
-                "brand": (_es_prop(prod, "MARK") or None),
+                "name": _clean_ws(str(title).title()),
+                "brand": (_clean_ws(_es_prop(prod, "MARK")) or None),
                 "price": _es_prop(prod, "END-PRICE"),
                 "original_price": _es_prop(prod, "INITIAL-PRICE"),
-                "unit_size": (str(desc).strip() if desc else None),
+                "unit_size": _clean_ws(desc),
                 "price_per_unit_claimed": _es_prop(prod, "END-KG-LT-PRICE"),
                 "promo_from": promo_from,
                 "promo_to": promo_to,
@@ -295,11 +302,49 @@ def normalize_eurospin(chain_dir: Path) -> list[dict]:
     return items
 
 
+# Sezioni MD che NON sono prodotti da supermercato (pacchetti vacanza,
+# crociere): prezzi a 3-4 cifre che inquinerebbero il catalogo.
+_MD_SKIP_SECTION_RE = re.compile(r"VIAGGI", re.I)
+
+
+def _md_date(raw) -> str | None:
+    # "2026-08-07T00:00:00" → "2026-08-07"
+    if raw and re.match(r"^\d{4}-\d{2}-\d{2}", str(raw)):
+        return str(raw)[:10]
+    return None
+
+
+def _md_qty_norm(prod: dict) -> str | None:
+    """weight+weight_um del feed MD → quantità totale normalizzata ('1200ml',
+    '450g'). Il feed pre-moltiplica i multipack (6x200ml → weight=1200)."""
+    try:
+        w = float(str(prod.get("weight") or 0).replace(",", "."))
+    except ValueError:
+        return None
+    um = str(prod.get("weight_um") or "").strip().lower()
+    if w <= 0 or not um:
+        return None
+    if um in ("kg",):
+        return f"{int(round(w * 1000))}g"
+    if um in ("g", "gr"):
+        return f"{int(round(w))}g"
+    if um in ("l", "lt"):
+        return f"{int(round(w * 1000))}ml"
+    if um in ("cl",):
+        return f"{int(round(w * 10))}ml"
+    if um in ("ml",):
+        return f"{int(round(w))}ml"
+    return None
+
+
 def normalize_md(chain_dir: Path) -> list[dict]:
     items: list[dict] = []
     for path in sorted(chain_dir.glob("products_*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         for prod in data.get("products", []):
+            section = str(prod.get("section") or "")
+            if _MD_SKIP_SECTION_RE.search(section):
+                continue  # pacchetti viaggio, non prodotti
             price = prod.get("priceOff") or prod.get("price")
             original = prod.get("price") if prod.get("priceOff") else None
             try:
@@ -310,18 +355,19 @@ def normalize_md(chain_dir: Path) -> list[dict]:
             if original and price and original <= price:
                 original = None
             items.append({
-                "name": (prod.get("name") or prod.get("title") or "").strip() or None,
-                "brand": (prod.get("brand") or "").strip() or None,
+                "name": _clean_ws(prod.get("name") or prod.get("title")),
+                "brand": _clean_ws(prod.get("brand")),
                 "price": price,
                 "original_price": original,
-                "unit_size": (prod.get("description") or "").strip() or None,
+                "unit_size": _clean_ws(prod.get("description")),
                 "price_per_unit_claimed": None,
-                "promo_from": None,
-                "promo_to": None,
+                "promo_from": _md_date(prod.get("sellOutStart")),
+                "promo_to": _md_date(prod.get("sellOutEnd")),
                 "requires_card": False,
                 "confidence": 1.0,
                 "page_ref": prod.get("page"),
                 "source_code": str(prod.get("code") or prod.get("idProduct") or "") or None,
+                "qty_norm": _md_qty_norm(prod),
                 "flyer": data.get("flyer_code"),
             })
     return items
