@@ -32,7 +32,7 @@ import asyncpg
 import httpx
 from bs4 import BeautifulSoup
 
-from ..aliases import resolve_existing
+from ..aliases import preserve_flyer_promos, resolve_existing
 
 log = logging.getLogger("penny")
 
@@ -441,6 +441,9 @@ class PennySpider:
                 [by_bc[b].get("source", SOURCE) for b in barcodes],
                 [by_bc[b]["product_url"] for b in barcodes],
             )
+            # Eredita i metadati promo dei volantini validi appena spenti
+            # (solo per le righe senza promo_expires proprio)
+            await preserve_flyer_promos(self.conn, [store_id], all_ids)
         return len(by_bc)
 
     async def scrape_prices(self) -> int:

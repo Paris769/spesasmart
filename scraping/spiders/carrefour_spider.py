@@ -23,7 +23,7 @@ import asyncpg
 import httpx
 from bs4 import BeautifulSoup
 
-from ..aliases import resolve_existing
+from ..aliases import preserve_flyer_promos, resolve_existing
 
 log = logging.getLogger("carrefour")
 
@@ -486,6 +486,8 @@ class CarrefourSpider:
                     for bc in barcodes
                 ],
             )
+            # Eredita i metadati promo dei volantini validi appena spenti
+            await preserve_flyer_promos(self.conn, [store_uuid], all_ids)
         return len(barcodes)
 
     async def _mark_missing_products_unavailable(self, store_uuid: str, run_started_at) -> int:

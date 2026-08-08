@@ -1,15 +1,19 @@
 """
-Lidl Italy homepage offer scraper.
+Lidl Italy weekly offers scraper.
 
-Lidl embeds a small set of offer products in data-grid-data JSON attributes on
-its homepage. This spider stores the products that have a visible price. It is a
-promotional subset, not the full Lidl catalog.
+Lidl embeds offer products in data-grid-data JSON attributes. The homepage
+alone contains only ~5 products: the real weekly offers live in the category
+pages (/c/<nome>-kw-<settimana>-<anno>/a<id>) linked from the homepage. The
+links change every week, so they are discovered at each run instead of being
+hardcoded. It is a promotional subset, not the full Lidl catalog.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
+import re
 from typing import Optional
 from urllib.parse import urljoin
 
@@ -17,7 +21,7 @@ import asyncpg
 import httpx
 from bs4 import BeautifulSoup
 
-from ..aliases import resolve_existing
+from ..aliases import preserve_flyer_promos, resolve_existing
 
 log = logging.getLogger("lidl")
 
@@ -32,6 +36,11 @@ STORE_PROVINCE = "VR"
 STORE_LAT = 45.3569
 STORE_LNG = 11.2864
 RATE = 1.0
+
+# Pagine categoria settimanali da seguire al massimo per run (la homepage ne
+# linka ~16; il cap evita run lunghi se il sito cambia struttura).
+MAX_CATEGORY_PAGES = int(os.getenv("LIDL_MAX_CATEGORY_PAGES", "20"))
+_CATEGORY_RE = re.compile(r"/c/[a-z0-9-]+/a\d+")
 
 HEADERS = {
     "User-Agent": (
@@ -63,25 +72,36 @@ class LidlSpider:
             await asyncio.sleep(RATE - elapsed)
         self._t_last = loop.time()
 
-    async def _get_offers(self) -> str | None:
+    async def _get(self, url: str) -> str | None:
         await self._throttle()
         for attempt in range(3):
             try:
                 r = await self.client.get(
-                    OFFERS_URL,
+                    url,
                     headers=HEADERS,
                     timeout=45,
                     follow_redirects=True,
                 )
                 if r.status_code == 200:
                     return r.text
-                log.warning("HTTP %s Lidl homepage", r.status_code)
+                log.warning("HTTP %s Lidl %s", r.status_code, url)
                 if r.status_code in (403, 404):
                     return None
             except httpx.RequestError as exc:
-                log.warning("Tentativo %d errore Lidl: %s", attempt + 1, exc)
+                log.warning("Tentativo %d errore Lidl %s: %s", attempt + 1, url, exc)
             await asyncio.sleep(2 ** attempt)
         return None
+
+    @staticmethod
+    def _category_paths(html: str) -> list[str]:
+        """Path delle pagine categoria offerte linkate dalla pagina."""
+        soup = BeautifulSoup(html, "html.parser")
+        paths: set[str] = set()
+        for a in soup.select("a[href]"):
+            m = _CATEGORY_RE.search(a.get("href") or "")
+            if m:
+                paths.add(m.group(0))
+        return sorted(paths)[:MAX_CATEGORY_PAGES]
 
     async def ensure_store(self) -> str | None:
         row = await self.conn.fetchrow(
@@ -232,17 +252,33 @@ class LidlSpider:
                 SOURCE,
                 [by_bc[b]["product_url"] for b in barcodes],
             )
+            # Eredita i metadati promo dei volantini validi appena spenti
+            await preserve_flyer_promos(self.conn, [store_id], all_ids)
         return len(by_bc)
 
     async def scrape_prices(self) -> int:
         store_id = await self.ensure_store()
         if not store_id:
             return 0
-        html = await self._get_offers()
+        html = await self._get(OFFERS_URL)
         if not html:
             return 0
-        products = self._parse_products(html)
-        total = await self._upsert_products_batch(products, store_id)
+        by_bc: dict[str, dict] = {
+            p["barcode"]: p for p in self._parse_products(html)
+        }
+
+        # Le offerte vere stanno nelle pagine categoria settimanali linkate
+        # dalla homepage (la home embedda solo ~5 prodotti).
+        for path in self._category_paths(html):
+            page = await self._get(urljoin(BASE_URL, path))
+            if not page:
+                continue
+            found = self._parse_products(page)
+            log.info("Lidl %s: %d prodotti", path, len(found))
+            for p in found:
+                by_bc.setdefault(p["barcode"], p)
+
+        total = await self._upsert_products_batch(list(by_bc.values()), store_id)
         log.info("=== Lidl: %d prezzi upsert ===", total)
         return total
 

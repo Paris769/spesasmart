@@ -8,8 +8,14 @@ name: Scraper CosìComodo
 
 on:
   schedule:
-    # Ogni notte alle 05:30 CET (04:30 UTC) — dopo "Scraper prezzi" (02:00)
+    # 3 run al giorno: con un solo run da 4 negozi il ciclo completo dei
+    # 101 punti vendita durava ~25 giorni, oltre la soglia freshness di
+    # 240h del coverage (Il Gigante e Italmark arrivavano a 0 prodotti
+    # freschi). A 12 negozi/giorno il ciclo scende a ~8,4 giorni.
+    # Il run notturno resta dopo "Scraper prezzi" (02:00 UTC).
     - cron: "30 4 * * *"
+    - cron: "30 12 * * *"
+    - cron: "30 20 * * *"
   workflow_dispatch:
     inputs:
       max_stores:

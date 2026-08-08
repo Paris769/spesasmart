@@ -27,6 +27,8 @@ import asyncpg
 import httpx
 from bs4 import BeautifulSoup
 
+from ..aliases import preserve_flyer_promos
+
 log = logging.getLogger("eurospin")
 
 BASE_URL = "https://www.eurospin.it"
@@ -480,6 +482,11 @@ class EurospinSpider:
                 for sid in store_ids
             ],
         )
+        # Eredita i metadati promo dei volantini validi appena spenti: il
+        # flip qui sopra spegneva le righe source='flyer' (promo_expires,
+        # original_price) sugli stessi (store, product) e le promo sparivano
+        # dal feed offerte entro 24h.
+        await preserve_flyer_promos(self.conn, store_ids, [prod_id])
         return True
 
     # ------------------------------------------------------------------

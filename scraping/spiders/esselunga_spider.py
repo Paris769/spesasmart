@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 import asyncpg
 import httpx
 
-from ..aliases import resolve_existing
+from ..aliases import preserve_flyer_promos, resolve_existing
 
 log = logging.getLogger("esselunga")
 
@@ -370,6 +370,8 @@ class EsselungaSpider:
                 datetime.now(timezone.utc),
                 [by_bc[b]["product_url"] for b in barcodes],
             )
+            # Eredita i metadati promo dei volantini validi appena spenti
+            await preserve_flyer_promos(self.conn, [store_uuid], all_ids)
         return len(barcodes)
 
     # ------------------------------------------------------------------

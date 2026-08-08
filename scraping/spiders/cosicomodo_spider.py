@@ -32,7 +32,7 @@ from typing import Optional
 import asyncpg
 import httpx
 
-from ..aliases import resolve_existing
+from ..aliases import preserve_flyer_promos, resolve_existing
 from ..ean import canonical_ean
 
 log = logging.getLogger("cosicomodo")
@@ -47,6 +47,13 @@ MIN_VALID_PRICE = 0.10  # prezzi inferiori sono placeholder/anomalie non acquist
 # nei 90 min di CI: se ne fa un sottoinsieme a rotazione (seed = giorno) così
 # nell'arco di pochi run si coprono tutti. Override: COSICOMODO_MAX_STORES.
 MAX_STORES = int(os.getenv("COSICOMODO_MAX_STORES", "10"))
+
+# Salvaguardia anti-starvation: se una catena non vede uno scrape da più di
+# queste ore, il suo negozio più vecchio entra comunque nel run corrente
+# anche se il LRU globale è dominato da un'altra catena. Col solo LRU
+# globale (101 negozi a 4/run = ciclo ~25 giorni) Il Gigante e Italmark
+# restavano ferme oltre la soglia freshness di 240h del coverage.
+CHAIN_STALE_HOURS = int(os.getenv("COSICOMODO_CHAIN_STALE_HOURS", "72"))
 CHAIN_FILTER = {
     slug.strip().lower()
     for slug in os.getenv("COSICOMODO_CHAINS", "").split(",")
@@ -347,6 +354,8 @@ class CosiComodoSpider:
                 [by_bc[b]["in_stock"] for b in barcodes],
                 [by_bc[b]["product_url"] for b in barcodes],
             )
+            # Eredita i metadati promo dei volantini validi appena spenti
+            await preserve_flyer_promos(self.conn, [store_uuid], all_ids)
         return len(barcodes)
 
     async def _scrape_category(
@@ -416,10 +425,35 @@ class CosiComodoSpider:
             )
             last_by_ext = {r["external_id"]: r["last"] for r in rows}
             epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
-            stores.sort(
-                key=lambda s: last_by_ext.get(f"{s['chain']}-{s['alias']}") or epoch
-            )
-            stores = stores[:MAX_STORES]
+
+            def _last(s: dict) -> datetime.datetime:
+                return last_by_ext.get(f"{s['chain']}-{s['alias']}") or epoch
+
+            stores.sort(key=_last)
+
+            # Salvaguardia per catena (vedi CHAIN_STALE_HOURS): un posto del
+            # run è garantito al negozio più vecchio di ogni catena rimasta
+            # ferma troppo a lungo; il resto segue il LRU globale.
+            now = datetime.datetime.now(datetime.timezone.utc)
+            stale = datetime.timedelta(hours=CHAIN_STALE_HOURS)
+            forced: list[dict] = []
+            for chain in sorted(chain_ids):
+                chain_stores = [s for s in stores if s["chain"] == chain]
+                if chain_stores and now - max(map(_last, chain_stores)) > stale:
+                    lru = chain_stores[0]  # stores è già ordinato per LRU
+                    forced.append(lru)
+                    log.info(
+                        "Catena '%s' ferma da >%dh: forzo %s nel run",
+                        chain, CHAIN_STALE_HOURS, lru["alias"],
+                    )
+            forced_ids = {id(s) for s in forced}
+            picked = forced[:MAX_STORES]
+            for s in stores:
+                if len(picked) >= MAX_STORES:
+                    break
+                if id(s) not in forced_ids:
+                    picked.append(s)
+            stores = picked
         log.info(
             "Negozi CosìComodo da scrapare: %d (su %d totali)",
             len(stores), len(self._stores),

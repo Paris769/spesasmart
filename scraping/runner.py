@@ -114,6 +114,22 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_prices_current_product_store "
         "ON prices(product_id, store_id) WHERE is_current = TRUE"
     )
+    # Colonne della pipeline volantini (in produzione arrivano da init.sql /
+    # migrazione 2026-07-04): garantite qui perché gli spider ora le leggono
+    # (aliases.preserve_flyer_promos) anche su DB creati da zero.
+    await conn.execute(
+        "ALTER TABLE prices ADD COLUMN IF NOT EXISTS promo_expires DATE"
+    )
+    await conn.execute(
+        "ALTER TABLE prices ADD COLUMN IF NOT EXISTS quarantined "
+        "BOOLEAN NOT NULL DEFAULT FALSE"
+    )
+    # Indice parziale per l'ereditarietà promo: le righe con promo_expires
+    # sono poche (solo volantini + righe arricchite), la scansione resta O(1).
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prices_promo_valid "
+        "ON prices(store_id, product_id) WHERE promo_expires IS NOT NULL"
+    )
 
 
 async def run_esselunga(conn: asyncpg.Connection, dry_run: bool, discover_only: bool) -> None:
@@ -305,9 +321,14 @@ async def main(args: argparse.Namespace) -> None:
             # dei nuovi inserimenti (evita che il disco del DB si riempia).
             # 'cosicomodo' escluso dal run 'all': scrape per-negozio lungo,
             # ha un suo workflow dedicato.
+            # 'pam' era stato tolto dal run notturno (commit 2307ebd, senza
+            # motivazione documentata): risultato, ultimo scrape 30/6 e
+            # coverage a 0. Il sito Pam a Casa risponde correttamente, quindi
+            # è di nuovo in schedule.
             # 'dedup' va in coda: unisce i prodotti duplicati dopo lo scrape.
             else ["prune", "esselunga", "conad", "carrefour", "eurospin",
-                  "iper", "coop", "penny", "aldi", "lidl", "md", "famila", "dedup"]
+                  "iper", "coop", "pam", "penny", "aldi", "lidl", "md",
+                  "famila", "dedup"]
         )
 
         for chain in chains:

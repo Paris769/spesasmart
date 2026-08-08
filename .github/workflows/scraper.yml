@@ -27,7 +27,9 @@ jobs:
   scrape:
     name: Scrape ${{ inputs.chain || 'all' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Il run notturno 'all' è arrivato a ~84 min e ora include di nuovo Pam:
+    # 120 min di margine per non morire di timeout a metà catalogo.
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4

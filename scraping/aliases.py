@@ -44,3 +44,70 @@ async def resolve_existing(
             id_by_bc[r["alias_barcode"]] = r["product_id"]
 
     return id_by_bc, direct_bcs
+
+
+async def preserve_flyer_promos(
+    conn: asyncpg.Connection,
+    store_ids: list,
+    product_ids: list,
+) -> int:
+    """
+    Arricchisce le righe prezzo correnti appena scritte con i metadati promo
+    dei volantini che il flip is_current=FALSE dello spider ha appena spento.
+
+    Problema risolto (misurato in produzione): flyers/load.py scrive righe
+    source='flyer' con promo_expires e original_price; lo scrape quotidiano
+    della stessa coppia (store, product) le spegneva e la promo spariva dal
+    feed /offers/nearby entro 24h, perdendo scadenza e prezzo pieno.
+
+    Strategia (ereditarietà): la NUOVA riga corrente dello spider eredita
+    promo_expires — e original_price/promo_label se non ne ha già — dalla
+    riga spenta più recente con promo ancora valida (promo_expires >= oggi).
+      * promo scadute: mai ereditate (le spegne lo sweep di flyers/load.py);
+      * righe quarantined: mai usate come sorgente;
+      * sanity: se la riga flyer ha un original_price NON superiore al prezzo
+        corrente dello spider la promo non si applica a quel prezzo e non
+        viene ereditato nulla (evita "offerte" senza sconto);
+      * nessuna riga cambia is_current: l'invariante "una sola riga corrente
+        per (store, product)" resta intatto;
+      * auto-sostenuta: la riga arricchita di oggi (promo_expires valorizzato)
+        farà da sorgente domani anche se prune elimina la riga flyer originale.
+
+    Va chiamata DOPO l'insert delle nuove righe correnti, nella stessa
+    transazione quando c'è. Ritorna il numero di righe arricchite.
+    """
+    if not store_ids or not product_ids:
+        return 0
+    tag = await conn.execute(
+        """
+        UPDATE prices AS n SET
+            promo_expires  = f.promo_expires,
+            original_price = COALESCE(n.original_price, f.original_price),
+            promo_label    = COALESCE(n.promo_label, f.promo_label)
+        FROM (
+            SELECT DISTINCT ON (store_id, product_id)
+                   store_id, product_id, original_price, promo_label,
+                   promo_expires
+            FROM prices
+            WHERE store_id = ANY($1::uuid[])
+              AND product_id = ANY($2::uuid[])
+              AND NOT is_current
+              AND NOT quarantined
+              AND promo_expires IS NOT NULL
+              AND promo_expires >= CURRENT_DATE
+            ORDER BY store_id, product_id, scraped_at DESC
+        ) AS f
+        WHERE n.store_id = f.store_id
+          AND n.product_id = f.product_id
+          AND n.is_current
+          AND n.source <> 'flyer'
+          AND n.promo_expires IS NULL
+          AND (f.original_price IS NULL OR f.original_price > n.price)
+        """,
+        store_ids,
+        product_ids,
+    )
+    try:
+        return int(tag.split()[-1])
+    except (AttributeError, IndexError, ValueError):
+        return 0

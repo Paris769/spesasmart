@@ -9,6 +9,14 @@ import httpx
 import asyncpg
 from datetime import datetime
 
+try:
+    from ..aliases import preserve_flyer_promos
+except ImportError:  # eseguito come script standalone, fuori dal package
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+    from scraping.aliases import preserve_flyer_promos
+
 PEPESTO_BASE = "https://api.pepesto.com/api"
 API_KEY = os.getenv("PEPESTO_API_KEY", "")
 
@@ -52,6 +60,7 @@ async def upsert_products(conn: asyncpg.Connection, chain_slug: str, products: l
 
     now = datetime.utcnow()
     inserted = 0
+    upserted_ids: list = []
 
     for p in products:
         name = p.get("name") or p.get("title", "")
@@ -115,7 +124,12 @@ async def upsert_products(conn: asyncpg.Connection, chain_slug: str, products: l
             p.get("price_per_unit"),
             now,
         )
+        upserted_ids.append(product_id)
         inserted += 1
+
+    # Eredita i metadati promo dei volantini validi appena spenti
+    if upserted_ids:
+        await preserve_flyer_promos(conn, [store_id], upserted_ids)
 
     print(f"[{chain_slug}] Inseriti/aggiornati {inserted} prezzi")
 

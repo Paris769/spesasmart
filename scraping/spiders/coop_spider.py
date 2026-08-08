@@ -18,7 +18,7 @@ from typing import Optional
 import asyncpg
 import httpx
 
-from ..aliases import resolve_existing
+from ..aliases import preserve_flyer_promos, resolve_existing
 
 log = logging.getLogger("coop")
 
@@ -418,6 +418,8 @@ class CoopSpider:
                 [by_bc[b]["product_url"] for b in barcodes],
                 SOURCE,
             )
+            # Eredita i metadati promo dei volantini validi appena spenti
+            await preserve_flyer_promos(self.conn, [store_id], all_ids)
         return len(by_bc)
 
     async def scrape_prices(self) -> int:

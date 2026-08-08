@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 import asyncpg
 import httpx
 
+from ..aliases import preserve_flyer_promos
+
 log = logging.getLogger("conad")
 
 BASE_URL = "https://spesaonline.conad.it"
@@ -201,7 +203,9 @@ class ConadSpider:
     # DB upsert
     # ------------------------------------------------------------------
 
-    async def _upsert_product_price(self, p: dict, store_uuid: str) -> bool:
+    async def _upsert_product_price(
+        self, p: dict, store_uuid: str, page_ids: list | None = None
+    ) -> bool:
         code = str(p.get("code") or "").strip()
         if not code:
             return False
@@ -276,6 +280,10 @@ class ConadSpider:
             price_per_unit,
             datetime.now(timezone.utc),
         )
+        # Accumulato per l'ereditarietà promo volantino (una chiamata a
+        # preserve_flyer_promos per pagina, non per prodotto).
+        if page_ids is not None:
+            page_ids.append(prod_id)
         return True
 
     # ------------------------------------------------------------------
@@ -315,12 +323,22 @@ class ConadSpider:
 
             products = self._parse_products(page_html)
             priced = 0
+            page_ids: list = []
             for product in products:
                 try:
-                    if await self._upsert_product_price(product, store_uuid):
+                    if await self._upsert_product_price(
+                        product, store_uuid, page_ids
+                    ):
                         priced += 1
                 except Exception as exc:
                     log.warning("Errore prodotto %s: %s", product.get("code"), exc)
+
+            # Eredita i metadati promo dei volantini validi appena spenti
+            if page_ids:
+                try:
+                    await preserve_flyer_promos(self.conn, [store_uuid], page_ids)
+                except Exception as exc:
+                    log.warning("Errore ereditarietà promo pagina %d: %s", page_num, exc)
 
             grand_total += priced
             if page_num % 10 == 0 or page_num == total_pages:
