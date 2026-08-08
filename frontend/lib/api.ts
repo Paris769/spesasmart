@@ -9,7 +9,7 @@ const api = axios.create({
 });
 
 /** Instrada un link d'acquisto attraverso /go (tracking + affiliazione + allowlist).
- *  Se url Ã¨ assente ritorna "#". */
+ *  Se url è assente ritorna "#". */
 export const outbound = (
   url?: string | null,
   chain?: string | null,
@@ -32,7 +32,7 @@ api.interceptors.request.use((config) => {
 
 export default api;
 
-// â”€â”€ Tipi â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Tipi ────────────────────────────────────────────────────────────────────
 
 export interface Store {
   id: string;
@@ -56,7 +56,7 @@ export interface Product {
   image_url: string | null;
   unit: string | null;
   unit_quantity: number | null;
-  /** Prezzo minimo corrente (entro il raggio se la posizione Ã¨ attiva). */
+  /** Prezzo minimo corrente (entro il raggio se la posizione è attiva). */
   min_price?: number | null;
   /** Numero di negozi con un prezzo corrente per questo prodotto. */
   price_store_count?: number | null;
@@ -107,7 +107,7 @@ export interface PriceResult {
   /** true se il prezzo non viene aggiornato da tempo: da verificare sul sito. */
   stale?: boolean;
 }
-// â”€â”€ Copertura catene â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Copertura catene ─────────────────────────────────────────────────────────
 
 export interface ChainCoverage {
   slug: string;
@@ -125,10 +125,10 @@ export const getChainsCoverage = (): Promise<ChainCoverage[]> =>
     .get<{ chains: ChainCoverage[] }>("/stores/coverage")
     .then((r) => r.data.chains || []);
 
-// â”€â”€ API calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── API calls ────────────────────────────────────────────────────────────────
 
-/** Codifica un poligono [[lat,lng],â€¦] come "lat,lng;lat,lng;â€¦" per la query.
- *  Ritorna undefined se l'area non Ã¨ valida (< 3 punti). */
+/** Codifica un poligono [[lat,lng],…] come "lat,lng;lat,lng;…" per la query.
+ *  Ritorna undefined se l'area non è valida (< 3 punti). */
 export const encodeArea = (
   area?: [number, number][] | null
 ): string | undefined => {
@@ -189,7 +189,7 @@ export const optimizeList = (
     .post(`/lists/${listId}/optimize`, { lat, lng, radius_km: radiusKm })
     .then((r) => r.data);
 
-// â”€â”€ Ottimizzatore lista "quick" (stateless, senza login) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Ottimizzatore lista "quick" (stateless, senza login) ─────────────────────
 
 export interface QuickStoreItem {
   query: string;
@@ -342,7 +342,7 @@ export const parseReceipt = (file: File): Promise<ReceiptResult> => {
     .then((r) => r.data);
 };
 
-// â”€â”€ Agente: parsing prompt lato server (LLM) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Agente: parsing prompt lato server (LLM) ─────────────────────────────────
 
 export interface AgentParsedItem {
   query: string;
@@ -356,12 +356,12 @@ export interface AgentParseResult {
 }
 
 /** Trasforma un prompt libero in item {query, quantity} via LLM lato server.
- *  Risponde 503 {"detail":"llm_unavailable"} se il modello non Ã¨ disponibile:
+ *  Risponde 503 {"detail":"llm_unavailable"} se il modello non è disponibile:
  *  il chiamante deve avere un fallback locale. */
 export const parseAgentPrompt = (prompt: string): Promise<AgentParseResult> =>
   api.post<AgentParseResult>("/agent/parse", { prompt }).then((r) => r.data);
 
-// â”€â”€ Avvisi di prezzo (watch) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Avvisi di prezzo (watch) ─────────────────────────────────────────────────
 
 export interface Watch {
   id: string;
@@ -393,7 +393,7 @@ export const getWatches = (email: string): Promise<Watch[]> =>
 export const deleteWatch = (id: string, email: string) =>
   api.delete(`/watches/${id}`, { params: { email } }).then((r) => r.data);
 
-// â”€â”€ Spesa abituale (liste ricorrenti con digest email) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Spesa abituale (liste ricorrenti con digest email) ───────────────────────
 
 export interface RecurringItemInput {
   query: string;
@@ -444,7 +444,7 @@ export const updateRecurringList = (
 export const deleteRecurringList = (id: string, email: string) =>
   api.delete(`/recurring/${id}`, { params: { email } }).then((r) => r.data);
 
-// â”€â”€ Verifica offerte (promo check) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Verifica offerte (promo check) ───────────────────────────────────────────
 
 export type PromoVerdict =
   | "true_promo"
@@ -468,4 +468,49 @@ export interface PromoCheckResult {
 
 export const getPromoCheck = (productId: string): Promise<PromoCheckResult> =>
   api.get<PromoCheckResult>(`/promo/${productId}`).then((r) => r.data);
+
+// -- Offerte vicino a te -------------------------------------------------------
+
+export interface NearbyOffer {
+  product_id: string;
+  product_name: string;
+  brand: string | null;
+  image_url: string | null;
+  chain_slug: string;
+  chain_name: string;
+  store_name: string;
+  /** null per gli store online (spesa nazionale, distanza non significativa). */
+  distance_km: number | null;
+  price: number;
+  original_price: number | null;
+  /** Sconto % calcolato dal prezzo barrato; null se non dichiarato. */
+  discount_pct: number | null;
+  promo_label: string | null;
+  /** Data di fine promo (ISO "YYYY-MM-DD"), quando nota (es. volantini). */
+  promo_expires: string | null;
+  /** Fonte del prezzo: "flyer" = promo da volantino. */
+  source: string;
+  price_per_unit: number | null;
+}
+
+/** Migliori promozioni correnti nei negozi vicini + spesa online nazionale.
+ *  Una sola offerta (la migliore) per coppia prodotto/catena. */
+export const getNearbyOffers = (
+  lat: number,
+  lng: number,
+  radiusKm: number,
+  chain?: string | null
+): Promise<NearbyOffer[]> =>
+  api
+    .get<NearbyOffer[]>("/offers/nearby", {
+      params: {
+        lat,
+        lng,
+        radius_km: radiusKm,
+        ...(chain ? { chain } : {}),
+      },
+      // La query aggregata sulle promo puo' essere lenta a cache DB fredda.
+      timeout: 30000,
+    })
+    .then((r) => r.data);
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth, stores, products, lists, scan, receipts, go,
-    watches, recurring, agent_ai, promo,
+    watches, recurring, agent_ai, promo, offers,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -17,3 +17,4 @@ api_router.include_router(watches.router)
 api_router.include_router(recurring.router)
 api_router.include_router(agent_ai.router)
 api_router.include_router(promo.router)
+api_router.include_router(offers.router)
