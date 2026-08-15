@@ -40,13 +40,14 @@ STORES_URL = f"{BASE_URL}/punti-vendita/"
 CHAIN_SLUG = "eurospin"
 SOURCE = "eurospin_web"
 RATE = 2.0  # secondi tra le richieste
-STORE_LIMIT = int(os.getenv('EUROSPIN_STORE_LIMIT', '600'))
-# Quanti negozi coprire in OGNI provincia prima di riempire il resto: le offerte
-# Eurospin sono nazionali e identiche ovunque (verificato: un solo prezzo per
-# prodotto su tutti i negozi), ma il campione privilegiava le grandi citta' e
-# lasciava intere regioni senza prezzi — un utente in Sardegna aveva un Eurospin
-# a 2 km e nessun prezzo.
-PER_PROVINCE = int(os.getenv('EUROSPIN_PER_PROVINCE', '5'))
+# Le offerte Eurospin sono nazionali e identiche in tutti i punti vendita
+# (verificato: un solo prezzo per prodotto su centinaia di negozi). Campionare
+# i negozi lasciava scoperte intere zone — un utente in Sardegna aveva un
+# Eurospin a 2 km e nessun prezzo — quindi ora li copriamo TUTTI. Il costo in
+# righe resta sostenibile perche' lo storico non viene piu' riscritto quando il
+# prezzo non cambia (vedi _upsert_product_prices).
+STORE_LIMIT = int(os.getenv('EUROSPIN_STORE_LIMIT', '2000'))
+PER_PROVINCE = int(os.getenv('EUROSPIN_PER_PROVINCE', '999'))
 
 HEADERS = {
     "User-Agent": (
