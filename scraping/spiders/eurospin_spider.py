@@ -40,7 +40,13 @@ STORES_URL = f"{BASE_URL}/punti-vendita/"
 CHAIN_SLUG = "eurospin"
 SOURCE = "eurospin_web"
 RATE = 2.0  # secondi tra le richieste
-STORE_LIMIT = int(os.getenv('EUROSPIN_STORE_LIMIT', '250'))
+STORE_LIMIT = int(os.getenv('EUROSPIN_STORE_LIMIT', '600'))
+# Quanti negozi coprire in OGNI provincia prima di riempire il resto: le offerte
+# Eurospin sono nazionali e identiche ovunque (verificato: un solo prezzo per
+# prodotto su tutti i negozi), ma il campione privilegiava le grandi citta' e
+# lasciava intere regioni senza prezzi — un utente in Sardegna aveva un Eurospin
+# a 2 km e nessun prezzo.
+PER_PROVINCE = int(os.getenv('EUROSPIN_PER_PROVINCE', '5'))
 
 HEADERS = {
     "User-Agent": (
@@ -381,22 +387,38 @@ class EurospinSpider:
     # ------------------------------------------------------------------
 
     async def _get_store_ids(self) -> list[str]:
-        """Restituisce un campione controllato di negozi Eurospin attivi."""
+        """
+        Campione di negozi Eurospin, distribuito su TUTTE le province.
+
+        Le offerte Eurospin sono nazionali (stesso prezzo ovunque), quindi il
+        campione serve solo a contenere il volume dei dati: prima privilegiava
+        le grandi citta' e lasciava scoperte intere province, con l'effetto che
+        un utente poteva avere un Eurospin a 2 km e vedere zero prezzi. Ora
+        garantiamo i primi PER_PROVINCE negozi di ogni provincia (i piu' distanti
+        tra loro, cioe' di comuni diversi) e solo dopo riempiamo fino al limite.
+        """
         rows = await self.conn.fetch(
             """
-            SELECT s.id
-            FROM stores s
-            JOIN chains c ON s.chain_id = c.id
-            WHERE c.slug = $1 AND s.is_active = TRUE
+            WITH numerati AS (
+                SELECT s.id, s.province,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY s.province
+                           ORDER BY s.city NULLS LAST, s.external_id
+                       ) AS posizione_in_provincia
+                FROM stores s
+                JOIN chains c ON s.chain_id = c.id
+                WHERE c.slug = $1 AND s.is_active = TRUE
+            )
+            SELECT id FROM numerati
             ORDER BY
-              CASE WHEN s.province = ANY($2::text[]) THEN 0 ELSE 1 END,
-              s.province NULLS LAST,
-              s.city NULLS LAST,
-              s.external_id
+              -- prima la quota garantita a ogni provincia, poi il resto
+              CASE WHEN posizione_in_provincia <= $2 THEN 0 ELSE 1 END,
+              posizione_in_provincia,
+              province NULLS LAST
             LIMIT $3
             """,
             CHAIN_SLUG,
-            ["MI", "RM", "TO", "NA", "BO", "FI", "PA", "GE", "VR", "PD"],
+            PER_PROVINCE,
             STORE_LIMIT,
         )
         return [str(r["id"]) for r in rows]
@@ -448,7 +470,34 @@ class EurospinSpider:
 
         now = datetime.now(timezone.utc)
 
-        # Batch: disattiva prezzi esistenti e inserisce nuovi per tutti i negozi
+        # Se il prezzo NON e' cambiato ci limitiamo a ribadire la rilevazione
+        # sulla riga corrente. Prima ogni run spegneva le righe e ne inseriva di
+        # nuove: con offerte nazionali identiche su centinaia di negozi questo
+        # produceva ~300.000 righe di storico al giorno tutte uguali (oltre 3
+        # milioni accumulate, ~1 GB) senza aggiungere alcuna informazione.
+        aggiornati = await self.conn.fetch(
+            """
+            UPDATE prices
+            SET scraped_at = $4, in_stock = TRUE
+            WHERE product_id = $1
+              AND store_id = ANY($2::uuid[])
+              AND is_current = TRUE
+              AND price = $3
+            RETURNING store_id
+            """,
+            prod_id,
+            store_ids,
+            p["price"],
+            now,
+        )
+        invariati = {str(r["store_id"]) for r in aggiornati}
+        da_scrivere = [sid for sid in store_ids if str(sid) not in invariati]
+
+        if not da_scrivere:
+            await preserve_flyer_promos(self.conn, store_ids, [prod_id])
+            return True
+
+        # Solo dove il prezzo e' cambiato (o mancava): storicizza e inserisci.
         await self.conn.execute(
             """
             UPDATE prices
@@ -458,7 +507,7 @@ class EurospinSpider:
               AND is_current = TRUE
             """,
             prod_id,
-            store_ids,
+            da_scrivere,
         )
 
         await self.conn.executemany(
@@ -479,7 +528,7 @@ class EurospinSpider:
                     SOURCE,
                     now,
                 )
-                for sid in store_ids
+                for sid in da_scrivere
             ],
         )
         # Eredita i metadati promo dei volantini validi appena spenti: il
