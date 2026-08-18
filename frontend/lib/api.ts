@@ -491,15 +491,27 @@ export interface NearbyOffer {
   /** Fonte del prezzo: "flyer" = promo da volantino. */
   source: string;
   price_per_unit: number | null;
+  /** Posizione dell'offerta dentro la sua catena (1 = la migliore).
+   *  Opzionale: i backend precedenti al ranking round-robin non lo inviano. */
+  chain_rank?: number;
 }
 
+/** Fonte delle offerte: solo volantino oppure tutte. */
+export type OffersSource = "flyer" | "all";
+
 /** Migliori promozioni correnti nei negozi vicini + spesa online nazionale.
- *  Una sola offerta (la migliore) per coppia prodotto/catena. */
+ *  Una sola offerta (la migliore) per coppia prodotto/catena, con le catene
+ *  alternate a giro (round-robin) cosi' che i discount non restino esclusi.
+ *
+ *  `source="flyer"` chiede le sole promo da volantino. Un backend vecchio
+ *  ignora il parametro e risponde con tutto: chi chiama deve quindi filtrare
+ *  anche lato client (vedi /offerte). */
 export const getNearbyOffers = (
   lat: number,
   lng: number,
   radiusKm: number,
-  chain?: string | null
+  chain?: string | null,
+  source?: OffersSource | null
 ): Promise<NearbyOffer[]> =>
   api
     .get<NearbyOffer[]>("/offers/nearby", {
@@ -508,6 +520,7 @@ export const getNearbyOffers = (
         lng,
         radius_km: radiusKm,
         ...(chain ? { chain } : {}),
+        ...(source && source !== "all" ? { source } : {}),
       },
       // La query aggregata sulle promo puo' essere lenta a cache DB fredda.
       timeout: 30000,

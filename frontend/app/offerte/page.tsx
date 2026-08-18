@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { BadgePercent, RefreshCw, SearchX } from "lucide-react";
+import { BadgePercent, Newspaper, RefreshCw, SearchX } from "lucide-react";
 import { getNearbyOffers } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
@@ -13,6 +13,7 @@ import { PriceCardSkeletonList } from "@/components/ui/PriceCardSkeleton";
 export default function OffersPage() {
   const { location, radiusKm } = useAppStore();
   const [chainFilter, setChainFilter] = useState<string | null>(null);
+  const [flyerOnly, setFlyerOnly] = useState(false);
 
   const {
     data: offers,
@@ -22,8 +23,15 @@ export default function OffersPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["offers-nearby", location?.lat, location?.lng, radiusKm],
-    queryFn: () => getNearbyOffers(location!.lat, location!.lng, radiusKm),
+    queryKey: ["offers-nearby", location?.lat, location?.lng, radiusKm, flyerOnly],
+    queryFn: () =>
+      getNearbyOffers(
+        location!.lat,
+        location!.lng,
+        radiusKm,
+        null,
+        flyerOnly ? "flyer" : "all"
+      ),
     enabled: !!location,
     staleTime: 15 * 60 * 1000, // allineato alla cache del backend (15 min)
     retry: (failureCount, err) =>
@@ -34,14 +42,21 @@ export default function OffersPage() {
   const notDeployed =
     isError && (error as AxiosError | undefined)?.response?.status === 404;
 
+  // Difensivo: se il backend e' vecchio e ignora source=flyer, il filtro
+  // volantino viene comunque applicato qui sulla risposta.
+  const results = useMemo(
+    () => (offers ?? []).filter((o) => !flyerOnly || o.source === "flyer"),
+    [offers, flyerOnly]
+  );
+
   // Chips dalle catene realmente presenti nei risultati
   const chains = useMemo(() => {
     const seen = new Map<string, string>();
-    for (const o of offers ?? []) {
+    for (const o of results) {
       if (!seen.has(o.chain_slug)) seen.set(o.chain_slug, o.chain_name);
     }
     return Array.from(seen, ([slug, name]) => ({ slug, name }));
-  }, [offers]);
+  }, [results]);
 
   // Se il filtro attivo non esiste piu' nei risultati (es. cambio zona), reset
   useEffect(() => {
@@ -51,9 +66,8 @@ export default function OffersPage() {
   }, [chains, chainFilter]);
 
   const visible = useMemo(
-    () =>
-      (offers ?? []).filter((o) => !chainFilter || o.chain_slug === chainFilter),
-    [offers, chainFilter]
+    () => results.filter((o) => !chainFilter || o.chain_slug === chainFilter),
+    [results, chainFilter]
   );
 
   return (
@@ -62,9 +76,9 @@ export default function OffersPage() {
 
       <div className="flex items-center gap-2">
         <h1 className="text-xl font-bold text-deep">Offerte vicino a te</h1>
-        {offers && offers.length > 0 && (
+        {results.length > 0 && (
           <span className="text-xs font-semibold text-accent bg-accent-50 px-2 py-0.5 rounded-pill">
-            {offers.length} promo
+            {results.length} promo
           </span>
         )}
       </div>
@@ -100,64 +114,89 @@ export default function OffersPage() {
         </div>
       )}
 
-      {location && !isLoading && !isError && offers && offers.length === 0 && (
-        <EmptyState
-          Icon={SearchX}
-          title="Nessuna offerta trovata"
-          subtitle="Prova ad allargare il raggio di ricerca o a cambiare zona."
-        />
-      )}
-
-      {location && !isLoading && !isError && offers && offers.length > 0 && (
+      {location && !isLoading && !isError && offers && (
         <>
-          {chains.length > 1 && (
-            <div className="flex gap-1.5 flex-wrap">
-              <button
-                onClick={() => setChainFilter(null)}
-                className={`text-xs px-3 py-1.5 rounded-pill border transition ${
-                  chainFilter === null
-                    ? "bg-primary text-white border-primary"
-                    : "bg-white border-stone-200 text-stone-600 hover:border-primary"
-                }`}
-              >
-                Tutte
-              </button>
-              {chains.map((c) => (
+          <div className="flex gap-1.5 flex-wrap">
+            <button
+              onClick={() => setFlyerOnly((v) => !v)}
+              aria-pressed={flyerOnly}
+              className={`inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-pill border transition ${
+                flyerOnly
+                  ? "bg-amber-500 text-white border-amber-500"
+                  : "bg-white border-stone-200 text-stone-600 hover:border-amber-500"
+              }`}
+            >
+              <Newspaper size={12} /> Solo volantino
+            </button>
+
+            {chains.length > 1 && (
+              <>
                 <button
-                  key={c.slug}
-                  onClick={() =>
-                    setChainFilter((cur) => (cur === c.slug ? null : c.slug))
-                  }
+                  onClick={() => setChainFilter(null)}
                   className={`text-xs px-3 py-1.5 rounded-pill border transition ${
-                    chainFilter === c.slug
+                    chainFilter === null
                       ? "bg-primary text-white border-primary"
                       : "bg-white border-stone-200 text-stone-600 hover:border-primary"
                   }`}
                 >
-                  {c.name}
+                  Tutte
                 </button>
-              ))}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {visible.map((o) => (
-              <OfferCard key={`${o.product_id}-${o.chain_slug}`} offer={o} />
-            ))}
+                {chains.map((c) => (
+                  <button
+                    key={c.slug}
+                    onClick={() =>
+                      setChainFilter((cur) => (cur === c.slug ? null : c.slug))
+                    }
+                    className={`text-xs px-3 py-1.5 rounded-pill border transition ${
+                      chainFilter === c.slug
+                        ? "bg-primary text-white border-primary"
+                        : "bg-white border-stone-200 text-stone-600 hover:border-primary"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
 
-          {visible.length === 0 && (
+          {results.length === 0 ? (
             <EmptyState
               Icon={SearchX}
-              title="Nessuna offerta per questa catena"
-              subtitle="Togli il filtro per vedere tutte le promozioni della zona."
+              title={
+                flyerOnly
+                  ? "Nessuna offerta da volantino"
+                  : "Nessuna offerta trovata"
+              }
+              subtitle={
+                flyerOnly
+                  ? "Nella tua zona non ci sono promozioni da volantino. Togli il filtro per vedere tutte le offerte."
+                  : "Prova ad allargare il raggio di ricerca o a cambiare zona."
+              }
             />
-          )}
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {visible.map((o) => (
+                  <OfferCard key={`${o.product_id}-${o.chain_slug}`} offer={o} />
+                ))}
+              </div>
 
-          <p className="text-[11px] text-stone-400 text-center pb-2">
-            Le migliori promozioni entro {radiusKm} km, piu' la spesa online
-            disponibile nella tua zona. Una offerta per prodotto e catena.
-          </p>
+              {visible.length === 0 && (
+                <EmptyState
+                  Icon={SearchX}
+                  title="Nessuna offerta per questa catena"
+                  subtitle="Togli il filtro per vedere tutte le promozioni della zona."
+                />
+              )}
+
+              <p className="text-[11px] text-stone-400 text-center pb-2">
+                Le migliori promozioni entro {radiusKm} km, piu' la spesa online
+                disponibile nella tua zona. Una offerta per prodotto e catena,
+                con le catene alternate a giro.
+              </p>
+            </>
+          )}
         </>
       )}
     </div>

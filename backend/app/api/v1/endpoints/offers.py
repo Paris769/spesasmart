@@ -8,6 +8,14 @@ raggio piu' gli store online nazionali (solo se la catena serve la zona, vedi
 core/geo_coverage). Una sola offerta - la migliore - per coppia
 (prodotto, catena).
 
+Ordinamento ROUND-ROBIN fra le catene (vedi CTE `ranked`): l'ordinamento
+globale per sconto percentuale premiava sistematicamente le insegne che
+espongono il prezzo barrato con percentuali alte (carrefour, esselunga,
+famila) ed escludeva del tutto i discount, che hanno prezzi bassi in assoluto
+ma sconti percentuali piu' contenuti - e con loro tutte le promo da volantino.
+Ora ogni catena presente in zona entra con la sua offerta migliore prima che
+una qualsiasi catena piazzi la seconda.
+
 Regole di serving identiche al resto dell'app: is_current, NOT quarantined,
 prezzo minimo valido, store attivi, freshness per catena (core/freshness).
 """
@@ -34,10 +42,21 @@ async def get_nearby_offers(
     radius_km: float = Query(5.0, ge=0.5, le=50, description="Raggio in km"),
     limit: int = Query(60, ge=1, le=120),
     chain: Optional[str] = Query(None, description="Filtra per slug catena"),
+    source: str = Query(
+        "all",
+        pattern="^(flyer|all)$",
+        description="'flyer' = solo promo da volantino; 'all' = tutte",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     # Le promo cambiano poche volte al giorno: cache 15 minuti.
     response.headers["Cache-Control"] = "public, max-age=900"
+
+    # Frammento SQL scelto per rami su un valore gia' validato dall'enum di
+    # Query (^(flyer|all)$): nessun dato utente finisce nella stringa SQL.
+    # Restringe il predicato del filtro promo, quindi resta compatibile con
+    # l'indice parziale idx_prices_current_promo_covering.
+    flyer_only_sql = "AND p.source = 'flyer'" if source == "flyer" else ""
 
     params: dict = {
         "lat": lat,
@@ -126,15 +145,32 @@ async def get_nearby_offers(
                         OR NULLIF(TRIM(p.promo_label), '') IS NOT NULL
                         OR p.source = 'flyer'
                       )
+                  {flyer_only_sql}
                 ORDER BY p.product_id, ns.chain_id,
                          (CASE WHEN p.original_price > p.price
                                THEN (p.original_price - p.price) / p.original_price
                           END) DESC NULLS LAST,
                          p.price ASC
             ),
+            ranked AS (
+                -- posizione dell'offerta DENTRO la sua catena (1 = la migliore)
+                SELECT b.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY b.chain_slug
+                           ORDER BY b.discount_pct DESC NULLS LAST, b.price ASC
+                       ) AS chain_rank
+                FROM best b
+            ),
             top AS (
-                SELECT * FROM best
-                ORDER BY discount_pct DESC NULLS LAST, price ASC
+                -- round-robin: prima la #1 di ogni catena (fra loro ordinate
+                -- per sconto), poi la #2 di ogni catena, e cosi' via. Con
+                -- l'ordinamento globale per sconto le catene discount non
+                -- entravano mai; cosi' ognuna ottiene una quota di :limit.
+                SELECT * FROM ranked
+                -- nessuna catena puo' occupare piu' di :limit slot: taglia
+                -- l'input del sort finale senza cambiare il risultato
+                WHERE chain_rank <= :limit
+                ORDER BY chain_rank, discount_pct DESC NULLS LAST, price ASC
                 LIMIT :limit
             )
             -- il join con products avviene SOLO sulle righe finali (<= limit):
@@ -153,10 +189,11 @@ async def get_nearby_offers(
                    t.promo_label,
                    t.promo_expires,
                    t.source,
-                   t.price_per_unit
+                   t.price_per_unit,
+                   t.chain_rank
             FROM top t
             JOIN products pr ON pr.id = t.product_id
-            ORDER BY t.discount_pct DESC NULLS LAST, t.price ASC
+            ORDER BY t.chain_rank, t.discount_pct DESC NULLS LAST, t.price ASC
         """),
         params,
     )
