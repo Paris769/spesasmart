@@ -533,7 +533,12 @@ async def apply_stores(stores: list[dict]) -> None:
         await conn.close()
 
 
-CHAINS = ("md", "eurospin", "lidl", "aldi", "penny")
+# Eurospin NON e' in CHAINS: i suoi punti vendita arrivano gia' da
+# eurospin_spider, che usa un external_id derivato da nome+indirizzo
+# ("avola-c-da-merlino") mentre l'API digitalflyer espone l'alias breve
+# ("avola"). Importarlo da qui crea un doppione per ogni negozio, senza
+# prezzi. Resta richiamabile con --chain eurospin solo per confronti.
+CHAINS = ("md", "lidl", "aldi", "penny")
 
 
 def validate_and_dedup(stores: list[dict]) -> tuple[list[dict], dict]:
