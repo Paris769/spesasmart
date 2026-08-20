@@ -124,3 +124,34 @@ def unavailable_online_chains(lat: Optional[float], lng: Optional[float]) -> str
     return ",".join(
         slug for slug, regioni in ONLINE_COVERAGE.items() if regione not in regioni
     )
+
+
+# ── Catene "da volantino": offerte valide nei punti vendita ──────────────────
+# MD, Lidl, Penny e Aldi non fanno spesa online: le loro offerte sono quelle del
+# volantino, valide nei negozi. Nel database stanno su un unico punto "offerte"
+# con coordinate al Nord, quindi sparivano per chiunque non fosse lì — un utente
+# in Sardegna non vedeva il Lidl che ha a 10 km. Vanno mostrate quando la catena
+# ha davvero punti vendita nella zona.
+FLYER_CHAINS = {"md", "lidl", "penny", "aldi"}
+
+CHAINS_NEARBY_SQL = """
+    SELECT DISTINCT c.slug
+    FROM stores s
+    JOIN chains c ON s.chain_id = c.id
+    WHERE s.is_active
+      AND s.external_id NOT LIKE '%-online'
+      AND s.external_id NOT LIKE '%-offerte'
+      AND ST_DWithin(
+            s.coordinates::geography,
+            ST_SetSRID(ST_Point(:lng, :lat), 4326)::geography,
+            :radius_m
+          )
+"""
+
+
+def offer_chains_param(chains_nearby: list[str]) -> str:
+    """
+    Catene da volantino da mostrare per questa posizione, come stringa
+    "slug1,slug2" per il bind param `offer_chains`.
+    """
+    return ",".join(sorted(FLYER_CHAINS.intersection(chains_nearby)))

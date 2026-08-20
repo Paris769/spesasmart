@@ -6,7 +6,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.freshness import fresh_price_sql, stale_price_sql
 from app.db.session import get_db
-from app.core.geo_coverage import unavailable_online_chains
+from app.core.geo_coverage import (
+    unavailable_online_chains,
+    offer_chains_param,
+    CHAINS_NEARBY_SQL,
+)
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -274,6 +278,8 @@ async def search_products(
               AND (
                     (s.external_id LIKE '%-online'
                      AND NOT ({CH}.slug = ANY(string_to_array(:no_online, ','))))
+                    OR (s.external_id LIKE '%-offerte'
+                        AND {CH}.slug = ANY(string_to_array(:offer_chains, ',')))
                     OR ST_DWithin(
                          s.coordinates::geography,
                          ST_Point(:lng, :lat)::geography,
@@ -283,6 +289,18 @@ async def search_products(
         params["lat"] = lat
         params["lng"] = lng
         params["radius_m"] = radius_km * 1000
+
+    # Catene "da volantino" (MD, Lidl, Penny, Aldi): le loro offerte stanno su un
+    # unico punto nazionale, quindi sparivano per chi non era vicino a quelle
+    # coordinate. Le mostriamo dove la catena ha punti vendita reali. La query e'
+    # leggera (poche centinaia di ms) e usa l'indice spaziale.
+    params["offer_chains"] = ""
+    if lat is not None and lng is not None:
+        vicine = await db.execute(
+            text(CHAINS_NEARBY_SQL),
+            {"lat": lat, "lng": lng, "radius_m": radius_km * 1000},
+        )
+        params["offer_chains"] = offer_chains_param([r[0] for r in vicine.fetchall()])
 
     price_geo_cx = price_geo_tpl.format(CH="cx")
     price_geo_ch = price_geo_tpl.format(CH="ch")
