@@ -131,8 +131,13 @@ class MdSpider:
         return node.get("data-flyer-code"), link or url
 
     async def ensure_store(self, pv: dict) -> str | None:
+        # Le offerte MD arrivano dal volantino e valgono nei punti vendita, non
+        # solo in quello da cui lo scarichiamo. Le teniamo quindi su un unico
+        # punto "offerte" nazionale, come Lidl/Penny/Aldi: il serving le mostra
+        # dove MD ha davvero negozi (vedi core/geo_coverage). Prima finivano sul
+        # PV di Budrio e nessun altro in Italia le vedeva.
         info = pv.get("pv") or {}
-        external_id = f"{STORE_EXTERNAL_PREFIX}-{info.get('id') or self.pv_id}"
+        external_id = "md-offerte"
         row = await self.conn.fetchrow(
             """
             SELECT s.id
