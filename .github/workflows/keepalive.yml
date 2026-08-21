@@ -1,21 +1,39 @@
 name: Keep-alive backend
 
 # Il servizio Render free va in sleep dopo ~15 min di inattività: il primo
-# accesso dopo lo sleep costa ~50s. Un ping ogni 13 min lo tiene sveglio.
-# /ping è leggero e NON tocca il DB. NB: GitHub può ritardare/disabilitare i
-# cron su repo inattivi — UptimeRobot resta il backup consigliato (vedi DEPLOY.md).
+# accesso dopo lo sleep costa 30-60s e la ricerca dell'utente sembra fallire.
+# /ping è leggero e NON tocca il DB.
+#
+# NB: GitHub ritarda i cron sui repo pubblici — misurato: esecuzioni ogni
+# 28-48 min invece dei 13 richiesti. Per questo ogni run resta viva ~25 min
+# pingando ogni 4 min: così la copertura reale è quasi continua anche quando
+# lo scheduler è in ritardo. UptimeRobot resta il backup consigliato
+# (ping esterno ogni 5 min, vedi DEPLOY.md).
 
 on:
   schedule:
     - cron: "*/13 * * * *"
   workflow_dispatch:
 
+# Evita che run sovrapposte si accumulino quando lo scheduler recupera i ritardi.
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Ping /ping
+      - name: Ping /ping per ~25 minuti
         run: |
-          curl -fsS --max-time 30 https://spesasmart-backend-4kyf.onrender.com/ping \
-            && echo " — backend sveglio" \
-            || echo "::warning::ping fallito (backend in cold-start o down)"
+          URL="https://spesasmart-backend-4kyf.onrender.com/ping"
+          for i in $(seq 1 7); do
+            if curl -fsS --max-time 90 "$URL" > /dev/null; then
+              echo "ping $i/7 ok — backend sveglio"
+            else
+              echo "::warning::ping $i/7 fallito (cold-start o down)"
+            fi
+            [ "$i" -lt 7 ] && sleep 240
+          done
+          echo "finestra keep-alive completata"

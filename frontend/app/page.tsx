@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { searchProducts, getProductPrices, Product, PriceResult } from "@/lib/api";
+import { searchProducts, getProductPrices, Product, PriceResult, COLD_START_HINT_MS } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG } from "@/lib/retailServices";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
@@ -353,6 +353,18 @@ export default function HomePage() {
     retry: 1,
   });
 
+  // Render free tier: dopo ~15 min di inattivita' il backend dorme e il primo
+  // risveglio richiede 30-60 s. Senza avviso l'attesa sembra un errore.
+  const [wakingUp, setWakingUp] = useState(false);
+  useEffect(() => {
+    if (!searching) {
+      setWakingUp(false);
+      return;
+    }
+    const t = setTimeout(() => setWakingUp(true), COLD_START_HINT_MS);
+    return () => clearTimeout(t);
+  }, [searching]);
+
   const { data: prices, isFetching: loadingPrices } = useQuery({
     queryKey: ["prices", selectedProduct?.id, location, radiusKm, searchArea],
     queryFn: () =>
@@ -465,6 +477,13 @@ export default function HomePage() {
           <p className="text-sm text-stone-500 bg-white border border-stone-200 rounded-xl px-3 py-2 shadow-card">
             Sto cercando "{debouncedQuery}" e controllo prezzi, disponibilita e catene compatibili.
           </p>
+          {wakingUp && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              Il servizio prezzi era in pausa e si sta riavviando: il primo
+              caricamento puo richiedere fino a un minuto. Le ricerche successive
+              sono immediate.
+            </p>
+          )}
           <PriceCardSkeletonList n={4} />
         </div>
       )}
@@ -472,7 +491,9 @@ export default function HomePage() {
       {!selectedProduct && !searching && searchError && debouncedQuery.length >= 2 && (
         <div className="rounded-card border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex flex-col gap-2">
           <p className="font-bold">Non riesco a recuperare i prezzi ora</p>
-          <p>C'e stato un problema temporaneo nel confronto dei supermercati. Riprova o cerca un nome piu semplice.</p>
+          <p>Il servizio prezzi non ha risposto in tempo: succede quando era in
+          pausa da un po'. Premi Riprova, di solito al secondo tentativo e gia
+          sveglio. Non significa che il prodotto non esista.</p>
           <button
             onClick={() => retrySearch()}
             className="self-start rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white active:scale-[0.99] transition"

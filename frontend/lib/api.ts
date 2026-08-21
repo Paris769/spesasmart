@@ -2,10 +2,15 @@ import axios from "axios";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
+/** Il backend gira su Render free tier: dopo ~15 min di inattivita' va in
+ *  sospensione e il primo risveglio richiede 30-60 s. Con un timeout basso la
+ *  prima ricerca falliva e l'utente vedeva un errore al posto dei prodotti. */
+export const COLD_START_HINT_MS = 6000;
+
 const api = axios.create({
   baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
-  timeout: 15000,
+  timeout: 75000,
 });
 
 /** Instrada un link d'acquisto attraverso /go (tracking + affiliazione + allowlist).
