@@ -151,10 +151,16 @@ async def run_esselunga(conn: asyncpg.Connection, dry_run: bool, discover_only: 
         await spider.run()
 
 
-async def run_conad(conn: asyncpg.Connection, dry_run: bool) -> None:
+async def run_conad(
+    conn: asyncpg.Connection, dry_run: bool, discover_only: bool = False
+) -> None:
     async with httpx.AsyncClient() as client:
         spider = ConadSpider(client, conn, dry_run=dry_run)
-        await spider.run()
+        if discover_only:
+            count = await spider.discover_stores()
+            logging.getLogger("runner").info("Negozi Conad upsert: %d", count)
+        else:
+            await spider.run()
 
 
 async def run_carrefour(conn: asyncpg.Connection, dry_run: bool) -> None:
@@ -266,7 +272,7 @@ async def run_chain(conn: asyncpg.Connection, chain: str, args: argparse.Namespa
     if chain == "esselunga":
         await run_esselunga(conn, args.dry_run, args.discover_only)
     elif chain == "conad":
-        await run_conad(conn, args.dry_run)
+        await run_conad(conn, args.dry_run, args.discover_only)
     elif chain == "carrefour":
         await run_carrefour(conn, args.dry_run)
     elif chain == "eurospin":

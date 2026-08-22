@@ -2,11 +2,18 @@
 Conad price scraper — spesaonline.conad.it
 
 Flusso:
-  1. GET /search/_jcr_content/root/search.loader.html?q=*&page=N
+  1. GET /search/_jcr_content/root/search.loader.html?query=*&bassiFissi=true&page=N
      Risposta: HTML con prodotti embeddati come data-product (JSON con entity encoding)
   2. Estrae prodotti da data-product attributes
   3. Salva solo prodotti con basePrice > 0 (programma "Bassi e Fissi" — prezzi
      garantiti uguali in tutti i punti vendita Conad)
+
+NB sul filtro: senza un punto vendita in sessione Conad espone il prezzo SOLO per
+i "Bassi e Fissi" (verificato: basePrice>0 coincide sempre con bassiFissi=true).
+Senza filtro il sito dichiara 5058 prodotti su 127 pagine di cui ~4300 senza
+prezzo, tutte scaricate per niente; col filtro sono 759 su 19 pagine.
+ATTENZIONE: il parametro di ricerca e' `query`, non `q` — con `q` il server
+ignora tutto e restituisce sempre il catalogo anonimo completo.
   4. Upsert DB con negozio virtuale "Conad Online" (coords: sede Bologna)
 
 Nota: prezzi store-specifici richiedono autenticazione; i "bassiFissi" sono
@@ -32,6 +39,22 @@ PAGE_SIZE = 40
 RATE = 2.5         # secondi tra le richieste (Conad rate-limita a ~1.5s → 429)
 RETRY_429_SLEEP = 30  # backoff lungo quando Conad risponde 429
 MAX_ATTEMPTS = 4
+
+# ── Punti vendita ────────────────────────────────────────────────────────────
+# API pubblica del sito corporate (nessuna autenticazione): una sola POST dal
+# centro d'Italia con raggio 800 km restituisce l'intera rete (~3200 negozi).
+# Il costo e' quasi tutto fisso per richiesta, quindi conviene una chiamata sola
+# invece di una griglia di punti.
+POS_URL = "https://www.conad.it/api/corporate/it-it.retrievePointOfService.json"
+POS_BODY = {"latitudine": "42.0000", "longitudine": "12.5000", "raggioRicerca": "800"}
+POS_TIMEOUT = 300           # misurato ~180 s
+POS_MIN_EXPECTED = 2000     # sotto questa soglia la risposta e' troncata: non scrivere
+# Insegne non alimentari: un PetStore o una pompa di benzina non e' "il super
+# sotto casa" e falserebbe il confronto della spesa.
+INSEGNE_ESCLUSE = {
+    "PET STORE CONAD", "CONAD SELF 24h", "PARAFARMACIA CONAD", "BENESSITY CONAD",
+}
+ITALIA_BBOX = (35.0, 47.5, 6.0, 19.0)  # lat_min, lat_max, lng_min, lng_max
 
 HEADERS = {
     "User-Agent": (
@@ -77,7 +100,7 @@ class ConadSpider:
 
     async def _get_page(self, page: int) -> str | None:
         await self._throttle()
-        params = {"q": "*", "page": page}
+        params = {"query": "*", "bassiFissi": "true", "page": page}
         for attempt in range(MAX_ATTEMPTS):
             try:
                 r = await self.client.get(
@@ -229,6 +252,10 @@ class ConadSpider:
 
         price_per_unit = self._parse_unit_price(p)
         promo_label = "Bassi e Fissi" if p.get("bassiFissi") else None
+        # Link alla scheda prodotto: senza, il pulsante "Acquista" porta alla
+        # home della catena e l'auto-carrello non puo' aggiungere l'articolo.
+        # Lo slug e' irrilevante: Conad reindirizza in base al solo codice.
+        product_url = f"{BASE_URL}/p/x--{code}"
 
         if self.dry_run:
             log.info(
@@ -272,19 +299,139 @@ class ConadSpider:
             """
             INSERT INTO prices
                 (product_id, store_id, price, original_price, promo_label,
-                 price_per_unit, in_stock, is_current, source, scraped_at)
-            VALUES ($1, $2, $3, NULL, $4, $5, TRUE, TRUE, 'conad_web', $6)
+                 price_per_unit, in_stock, is_current, source, scraped_at,
+                 product_url)
+            VALUES ($1, $2, $3, NULL, $4, $5, TRUE, TRUE, 'conad_web', $6, $7)
             """,
             prod_id, store_uuid,
             base_price, promo_label,
             price_per_unit,
             datetime.now(timezone.utc),
+            product_url,
         )
         # Accumulato per l'ereditarietà promo volantino (una chiamata a
         # preserve_flyer_promos per pagina, non per prodotto).
         if page_ids is not None:
             page_ids.append(prod_id)
         return True
+
+
+    # ------------------------------------------------------------------
+    # Punti vendita
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_store_entry(pv: dict) -> dict | None:
+        """Normalizza un punto vendita dell'API corporate (None se da scartare)."""
+        # anacanId e' la chiave STABILE pubblicata da Conad (compare anche nell'URL
+        # della scheda negozio). Va trattato come STRINGA: inizia sempre per zero e
+        # un cast a intero ne cambierebbe il valore, creando un doppione per ogni
+        # negozio al run successivo — e' esattamente cosi' che nacquero i 1.112
+        # doppioni Eurospin di luglio.
+        anacan = str(pv.get("anacanId") or "").strip()
+        lat, lng = pv.get("latitudine"), pv.get("longitudine")
+        if not anacan or lat is None or lng is None:
+            return None
+        if (pv.get("descrizioneInsegna") or "").strip() in INSEGNE_ESCLUSE:
+            return None
+        lat_min, lat_max, lng_min, lng_max = ITALIA_BBOX
+        try:
+            lat, lng = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return None
+        if not (lat_min <= lat <= lat_max and lng_min <= lng <= lng_max):
+            return None
+
+        external_id = f"conad-{anacan}"
+        # Cintura di sicurezza: i suffissi -online/-offerte identificano i negozi
+        # virtuali su cui poggiano i filtri del serving. Un punto vendita reale
+        # non deve mai finire in quell'insieme.
+        if external_id.endswith(("-online", "-offerte")):
+            return None
+
+        citta = (pv.get("nomeComune") or "").title()
+        return {
+            "external_id": external_id,
+            "name": f"{(pv.get('pdvTitle') or 'Conad').strip()} {citta}".strip(),
+            "address": (pv.get("indirizzo") or "").title() or None,
+            "city": citta or None,
+            "province": (pv.get("codiceProvincia") or "").strip() or None,
+            "postal_code": (pv.get("cap") or "").strip() or None,
+            "lat": lat,
+            "lng": lng,
+            "has_delivery": pv.get("spesaACasa") == "S",
+            "has_click_collect": pv.get("ordinaRitira") == "S",
+        }
+
+    async def discover_stores(self) -> int:
+        """Scarica la rete Conad dall'API corporate e la inserisce nel database."""
+        log.info("Scarico i punti vendita da %s", POS_URL)
+        try:
+            r = await self.client.post(
+                POS_URL, json=POS_BODY, headers={**HEADERS, "Content-Type": "application/json"},
+                timeout=POS_TIMEOUT,
+            )
+        except httpx.RequestError as exc:
+            log.error("Richiesta punti vendita fallita: %s", exc)
+            return 0
+        if r.status_code != 200:
+            log.error("HTTP %s dall'API punti vendita", r.status_code)
+            return 0
+
+        raw = (r.json() or {}).get("data") or []
+        log.info("Punti vendita ricevuti: %d", len(raw))
+        if len(raw) < POS_MIN_EXPECTED:
+            # Risposta troncata o parziale: meglio non scrivere nulla che
+            # disattivare per errore meta' rete.
+            log.error(
+                "Risposta incompleta (%d < %d attesi): non modifico il database",
+                len(raw), POS_MIN_EXPECTED,
+            )
+            return 0
+
+        negozi = [n for n in (self._parse_store_entry(pv) for pv in raw) if n]
+        log.info("Punti vendita alimentari validi: %d", len(negozi))
+        if self.dry_run:
+            for n in negozi[:5]:
+                log.info("[DRY] %s — %s (%s)", n["external_id"], n["name"], n["province"])
+            return len(negozi)
+
+        chain_id = await self.conn.fetchval("SELECT id FROM chains WHERE slug = 'conad'")
+        if not chain_id:
+            log.error("Catena conad assente nel database")
+            return 0
+
+        # Inserimento in blocco dentro una transazione: 2.962 execute() separati
+        # sul pooler facevano cadere la connessione a meta' import.
+        righe = [
+            (chain_id, n["name"], n["address"], n["city"], n["province"], n["postal_code"],
+             n["lng"], n["lat"], n["external_id"], n["has_delivery"], n["has_click_collect"])
+            for n in negozi
+        ]
+        async with self.conn.transaction():
+            await self.conn.executemany(
+                """
+                INSERT INTO stores (chain_id, name, address, city, province, postal_code,
+                                    coordinates, external_id, has_delivery, has_click_collect,
+                                    is_active)
+                VALUES ($1,$2,$3,$4,$5,$6, ST_SetSRID(ST_MakePoint($7,$8),4326), $9,$10,$11,TRUE)
+                ON CONFLICT (chain_id, external_id) WHERE external_id IS NOT NULL
+                DO UPDATE SET
+                    name = EXCLUDED.name,
+                    address = EXCLUDED.address,
+                    city = EXCLUDED.city,
+                    province = EXCLUDED.province,
+                    postal_code = EXCLUDED.postal_code,
+                    coordinates = EXCLUDED.coordinates,
+                    has_delivery = EXCLUDED.has_delivery,
+                    has_click_collect = EXCLUDED.has_click_collect,
+                    is_active = TRUE
+                """,
+                righe,
+            )
+        scritti = len(righe)
+        log.info("Punti vendita Conad scritti: %d", scritti)
+        return scritti
 
     # ------------------------------------------------------------------
     # Entry point
@@ -310,7 +457,6 @@ class ConadSpider:
         log.info("Totale prodotti: %d — pagine: %d", total, total_pages)
 
         grand_total = 0
-        all_pages = [first_page] + [None] * (total_pages - 1)
 
         for page_num in range(1, total_pages + 1):
             if page_num == 1:
