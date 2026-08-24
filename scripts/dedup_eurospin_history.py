@@ -5,15 +5,18 @@ Deduplica lo storico prezzi Eurospin.
 Le offerte Eurospin sono nazionali: lo stesso prezzo veniva riscritto ogni
 giorno su centinaia di negozi, generando milioni di righe identiche (~99,6% di
 duplicati) senza alcuna informazione in piu'. Qui teniamo UNA riga per ogni
-combinazione (prodotto, giorno, prezzo) — così la serie storica di ogni prodotto
-resta intatta per il controllo "promo vera o finta" — ed eliminiamo il resto.
+combinazione (prodotto, giorno, prezzo) — cosi' la serie storica di ogni
+prodotto resta intatta per il controllo "promo vera o finta" — e togliamo il resto.
 
-Tocca SOLO le righe storiche (is_current = FALSE) della catena eurospin.
+Tocca SOLO le righe storiche (is_current = FALSE) con source='eurospin_web'.
 I prezzi correnti non vengono mai toccati.
 
+Procede un PRODOTTO alla volta: le cancellazioni massive in un colpo solo
+facevano cadere la connessione del pooler.
+
 Uso:
-    python scripts/dedup_eurospin_history.py --dry-run   # solo conteggio
-    python scripts/dedup_eurospin_history.py             # esegue
+    python scripts/dedup_eurospin_history.py --dry-run
+    python scripts/dedup_eurospin_history.py
 """
 import argparse
 import asyncio
@@ -23,8 +26,7 @@ from pathlib import Path
 
 import asyncpg
 
-BATCH = 50_000
-CHAIN = "eurospin"
+SOURCE = "eurospin_web"
 
 
 def db_url() -> str:
@@ -38,95 +40,95 @@ def db_url() -> str:
     return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
-SELECT_DUPLICATI = """
-    SELECT pr.id
-    FROM prices pr
-    JOIN stores s ON pr.store_id = s.id
-    JOIN chains c ON s.chain_id = c.id
-    WHERE c.slug = $1
-      AND pr.is_current = FALSE
-      AND EXISTS (
-          -- esiste già un'altra riga con stesso prodotto, giorno e prezzo:
-          -- questa è una copia, la teniamo solo una volta (id più basso)
-          SELECT 1
-          FROM prices altra
-          JOIN stores s2 ON altra.store_id = s2.id
-          JOIN chains c2 ON s2.chain_id = c2.id
-          WHERE c2.slug = $1
-            AND altra.is_current = FALSE
-            AND altra.product_id = pr.product_id
-            AND altra.price = pr.price
-            AND date_trunc('day', altra.scraped_at) = date_trunc('day', pr.scraped_at)
-            AND altra.id < pr.id
-      )
-    LIMIT $2
+DELETE_UN_PRODOTTO = """
+    DELETE FROM prices p
+    WHERE p.id IN (
+        SELECT id FROM (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY date_trunc('day', scraped_at), price
+                       ORDER BY id
+                   ) AS rn
+            FROM prices
+            WHERE product_id = $1
+              AND is_current = FALSE
+              AND source = $2
+        ) x
+        WHERE rn > 1
+    )
 """
+
+
+async def connetti(url: str) -> asyncpg.Connection:
+    conn = await asyncpg.connect(url, timeout=60, command_timeout=180)
+    await conn.execute("SET statement_timeout = '180s'")
+    return conn
 
 
 async def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true", help="conta soltanto")
+    ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    conn = await asyncpg.connect(db_url())
+    url = db_url()
+    conn = await connetti(url)
     try:
-        await conn.execute("SET statement_timeout = '600s'")
-
         prima = await conn.fetchrow(
-            """
-            SELECT count(*) FILTER (WHERE pr.is_current) AS correnti,
-                   count(*) FILTER (WHERE NOT pr.is_current) AS storici
-            FROM prices pr JOIN stores s ON pr.store_id=s.id
-            JOIN chains c ON s.chain_id=c.id WHERE c.slug=$1
-            """,
-            CHAIN,
+            """SELECT count(*) FILTER (WHERE is_current) AS correnti,
+                      count(*) FILTER (WHERE NOT is_current) AS storici
+               FROM prices WHERE source = $1""",
+            SOURCE,
         )
         print(f"Eurospin prima: {prima['correnti']:,} correnti | {prima['storici']:,} storici")
 
-        if args.dry_run:
-            n = await conn.fetchval(
-                f"SELECT count(*) FROM ({SELECT_DUPLICATI.replace('LIMIT $2', 'LIMIT 5000000')}) x",
-                CHAIN,
+        prodotti = [
+            r["product_id"]
+            for r in await conn.fetch(
+                """SELECT DISTINCT product_id FROM prices
+                   WHERE source = $1 AND is_current = FALSE""",
+                SOURCE,
             )
-            print(f"[DRY] duplicati eliminabili: {n:,}")
+        ]
+        print(f"Prodotti con storico da ripulire: {len(prodotti):,}\n")
+
+        if args.dry_run:
+            print("[DRY] nessuna modifica eseguita")
             return
 
-        # execute() restituisce la stringa di stato "DELETE n": è da lì che
-        # leggiamo quante righe sono state eliminate a ogni lotto.
         totale = 0
-        giro = 0
-        while True:
-            giro += 1
-            status = await conn.execute(
-                f"""
-                WITH da_eliminare AS ({SELECT_DUPLICATI})
-                DELETE FROM prices p USING da_eliminare d WHERE p.id = d.id
-                """,
-                CHAIN,
-                BATCH,
-            )
-            n = int(status.split()[-1]) if status.startswith("DELETE") else 0
-            totale += n
-            print(f"  lotto {giro:>3}: eliminate {n:,} (totale {totale:,})", flush=True)
-            if n == 0:
-                break
+        for i, pid in enumerate(prodotti, 1):
+            for tentativo in range(3):
+                try:
+                    status = await conn.execute(DELETE_UN_PRODOTTO, pid, SOURCE)
+                    totale += int(status.split()[-1]) if status.startswith("DELETE") else 0
+                    break
+                except (asyncpg.PostgresError, OSError, asyncpg.exceptions.ConnectionDoesNotExistError):
+                    # il pooler puo' chiudere la connessione: riapri e riprova
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
+                    conn = await connetti(url)
+            if i % 100 == 0 or i == len(prodotti):
+                print(f"  {i:>5}/{len(prodotti)} prodotti — righe eliminate: {totale:,}", flush=True)
 
         dopo = await conn.fetchrow(
-            """
-            SELECT count(*) FILTER (WHERE pr.is_current) AS correnti,
-                   count(*) FILTER (WHERE NOT pr.is_current) AS storici
-            FROM prices pr JOIN stores s ON pr.store_id=s.id
-            JOIN chains c ON s.chain_id=c.id WHERE c.slug=$1
-            """,
-            CHAIN,
+            """SELECT count(*) FILTER (WHERE is_current) AS correnti,
+                      count(*) FILTER (WHERE NOT is_current) AS storici
+               FROM prices WHERE source = $1""",
+            SOURCE,
         )
         print(f"\nEurospin dopo: {dopo['correnti']:,} correnti | {dopo['storici']:,} storici")
         print(f"Righe eliminate: {totale:,}")
-        print("\nRecupero spazio su disco in corso (VACUUM)…")
+        print("\nRecupero spazio (VACUUM ANALYZE)…", flush=True)
         await conn.execute("VACUUM (ANALYZE) prices")
         print("Fatto.")
     finally:
-        await conn.close()
+        try:
+            await conn.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
