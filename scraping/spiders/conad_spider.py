@@ -30,8 +30,14 @@ import asyncpg
 import httpx
 
 from ..aliases import preserve_flyer_promos
+from ..ean import canonical_ean
 
 log = logging.getLogger("conad")
+
+# EAN reale dal JSON-LD della scheda prodotto ("gtin"/"gtin13"). La lista dei
+# risultati espone solo il codice interno Conad: senza l'EAN i prodotti non si
+# uniscono a quelli delle altre catene e restano fuori dal confronto prezzi.
+_EAN_RE = re.compile(r'"gtin\d*"\s*:\s*"(\d+)"')
 
 BASE_URL = "https://spesaonline.conad.it"
 SEARCH_URL = f"{BASE_URL}/search/_jcr_content/root/search.loader.html"
@@ -86,6 +92,12 @@ class ConadSpider:
         self.conn = conn
         self.dry_run = dry_run
         self._t_last = 0.0
+        # codice interno Conad -> id prodotto gia' risolto in passato.
+        # Precaricata da product_aliases: e' cio' che rende sostenibile il
+        # recupero dell'EAN, altrimenti servirebbe una richiesta per prodotto
+        # a ogni esecuzione (~30 minuti buttati ogni notte).
+        self._alias_cache: dict[str, object] = {}
+        self._ean_scaricati = 0
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -242,7 +254,7 @@ class ConadSpider:
             return False
 
         brand = (p.get("marchio") or "").strip() or None
-        barcode = f"conad-{code}"
+        alias = f"conad-{code}"
 
         # Costruisci URL immagine (le list page hanno già l'URL completo)
         img = p.get("defaultImgSrc") or ""
@@ -266,18 +278,36 @@ class ConadSpider:
             )
             return True
 
-        prod_id = await self.conn.fetchval(
-            "SELECT id FROM products WHERE barcode = $1 LIMIT 1", barcode
-        )
+        # 1) Codice gia' risolto in un'esecuzione precedente? Nessuna richiesta.
+        prod_id = self._alias_cache.get(alias)
+
         if prod_id is None:
+            # 2) Prima volta che vediamo questo codice: leggiamo l'EAN reale
+            #    dalla scheda prodotto. E' il passaggio che rende i prodotti
+            #    Conad confrontabili con le altre catene (il codice interno
+            #    non aggancia nulla). Si paga una volta sola per prodotto.
+            ean = await self._fetch_ean(code)
+            barcode = ean or alias
+
             prod_id = await self.conn.fetchval(
-                """
-                INSERT INTO products (barcode, name, brand, image_url, source)
-                VALUES ($1, $2, $3, $4, 'conad_web')
-                RETURNING id
-                """,
-                barcode, name, brand, image_url,
+                "SELECT id FROM products WHERE barcode = $1 LIMIT 1", barcode
             )
+            if prod_id is None:
+                prod_id = await self.conn.fetchval(
+                    """
+                    INSERT INTO products (barcode, name, brand, image_url, source)
+                    VALUES ($1, $2, $3, $4, 'conad_web')
+                    RETURNING id
+                    """,
+                    barcode, name, brand, image_url,
+                )
+            # 3) Memorizza la corrispondenza: dalla prossima volta niente rete.
+            await self.conn.execute(
+                "INSERT INTO product_aliases (alias_barcode, product_id) "
+                "VALUES ($1, $2) ON CONFLICT (alias_barcode) DO NOTHING",
+                alias, prod_id,
+            )
+            self._alias_cache[alias] = prod_id
         else:
             await self.conn.execute(
                 """
@@ -315,6 +345,57 @@ class ConadSpider:
             page_ids.append(prod_id)
         return True
 
+
+
+    # ------------------------------------------------------------------
+    # Codice a barre reale
+    # ------------------------------------------------------------------
+
+    async def _carica_alias(self) -> None:
+        """Precarica i codici Conad gia' risolti in passato (una sola query)."""
+        rows = await self.conn.fetch(
+            "SELECT alias_barcode, product_id FROM product_aliases "
+            "WHERE alias_barcode LIKE 'conad-%'"
+        )
+        self._alias_cache = {r["alias_barcode"]: r["product_id"] for r in rows}
+        log.info("Codici Conad gia' risolti in memoria: %d", len(self._alias_cache))
+
+    async def _get_detail(self, code: str) -> str | None:
+        """Scarica la scheda prodotto (lo slug e' irrilevante: Conad
+        reindirizza alla pagina canonica dal solo codice)."""
+        await self._throttle()
+        url = f"{BASE_URL}/p/x--{code}"
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                r = await self.client.get(
+                    url, headers=HEADERS, timeout=30, follow_redirects=True
+                )
+                if r.status_code == 200:
+                    return r.text
+                if r.status_code in (403, 404):
+                    return None
+                if r.status_code == 429:
+                    await asyncio.sleep(RETRY_429_SLEEP)
+                    continue
+            except httpx.RequestError as exc:
+                log.warning("Scheda %s tentativo %d: %s", code, attempt + 1, exc)
+            await asyncio.sleep(2 ** attempt)
+        return None
+
+    async def _fetch_ean(self, code: str) -> str | None:
+        """
+        Legge l'EAN reale dalla scheda prodotto (JSON-LD `gtin`).
+        Best-effort: se non e' recuperabile si torna None e il chiamante
+        ripiega sul codice interno.
+        """
+        page = await self._get_detail(code)
+        if not page:
+            return None
+        m = _EAN_RE.search(page)
+        if not m:
+            return None
+        self._ean_scaricati += 1
+        return canonical_ean(m.group(1))
 
     # ------------------------------------------------------------------
     # Punti vendita
@@ -440,6 +521,9 @@ class ConadSpider:
     async def run(self) -> int:
         log.info("=== Conad spider avviato (dry_run=%s) ===", self.dry_run)
 
+        if not self.dry_run:
+            await self._carica_alias()
+
         store_uuid = await self.match_stores()
         if not store_uuid:
             log.error("Nessuno store disponibile — interruzione")
@@ -493,5 +577,9 @@ class ConadSpider:
                     page_num, total_pages, priced, grand_total,
                 )
 
-        log.info("=== Fine. Prezzi totali scritti: %d ===", grand_total)
+        log.info(
+            "=== Fine. Prezzi scritti: %d — codici a barre recuperati stavolta: %d "
+            "(i gia' noti non costano richieste) ===",
+            grand_total, self._ean_scaricati,
+        )
         return grand_total
