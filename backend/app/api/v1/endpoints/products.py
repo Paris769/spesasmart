@@ -534,7 +534,48 @@ async def get_product_prices(
         """),
         params,
     )
-    return [dict(r) for r in result.mappings().all()]
+    offerte = [dict(r) for r in result.mappings().all()]
+
+    # Per le catene con prezzo nazionale (un unico punto "online"/"offerte") la
+    # distanza sarebbe vuota, e l'utente non saprebbe di avere quell'insegna a
+    # due passi. Recuperiamo il punto vendita piu' vicino della stessa catena
+    # con UNA query a parte: dentro la query principale lo stesso controllo
+    # costava decine di secondi.
+    virtuali = {o["chain_slug"] for o in offerte if o.get("is_online") or o.get("distance_km") is None}
+    if virtuali and lat is not None and lng is not None:
+        vicini = await db.execute(
+            text("""
+                SELECT DISTINCT ON (c.slug)
+                       c.slug AS chain_slug,
+                       s.name AS nearest_store_name,
+                       ROUND((ST_Distance(
+                           s.coordinates::geography,
+                           ST_SetSRID(ST_Point(:lng, :lat), 4326)::geography
+                       ) / 1000)::numeric, 2) AS nearest_store_km
+                FROM stores s
+                JOIN chains c ON s.chain_id = c.id
+                WHERE s.is_active
+                  AND c.slug = ANY(string_to_array(:slugs, ','))
+                  AND s.external_id NOT LIKE '%-online'
+                  AND s.external_id NOT LIKE '%-offerte'
+                  AND ST_DWithin(
+                        s.coordinates::geography,
+                        ST_SetSRID(ST_Point(:lng, :lat), 4326)::geography,
+                        :radius_m
+                      )
+                ORDER BY c.slug, s.coordinates <-> ST_SetSRID(ST_Point(:lng, :lat), 4326)
+            """),
+            {"lat": lat, "lng": lng, "slugs": ",".join(sorted(virtuali)),
+             "radius_m": (radius_km or 10) * 1000},
+        )
+        per_catena = {r["chain_slug"]: r for r in vicini.mappings().all()}
+        for o in offerte:
+            v = per_catena.get(o["chain_slug"])
+            if v:
+                o["nearest_store_name"] = v["nearest_store_name"]
+                o["nearest_store_km"] = float(v["nearest_store_km"])
+
+    return offerte
 
 
 @router.get("/{product_id}/price-history")
