@@ -108,9 +108,13 @@ jobs:
   unifica:
     name: Dedup prodotti
     needs: catene
-    # Gira anche se qualche catena e' fallita: i duplicati delle altre vanno
-    # comunque uniti.
-    if: always() && needs.catene.result != 'cancelled'
+    # Gira anche se qualche catena e' fallita (i duplicati delle altre vanno
+    # comunque uniti), ma SOLO nel run completo: con always() da solo partiva
+    # anche quando si lancia a mano una singola catena.
+    if: >-
+      always()
+      && (github.event_name == 'schedule' || inputs.chain == 'all')
+      && needs.catene.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
