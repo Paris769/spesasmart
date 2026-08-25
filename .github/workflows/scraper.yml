@@ -23,37 +23,105 @@ on:
         default: "false"
         type: boolean
 
-jobs:
-  scrape:
-    name: Scrape ${{ inputs.chain || 'all' }}
-    runs-on: ubuntu-latest
-    # Il run notturno 'all' è arrivato a ~84 min e ora include di nuovo Pam:
-    # 120 min di margine per non morire di timeout a metà catalogo.
-    timeout-minutes: 120
+# Un solo run alla volta: due scrape in parallelo si contenderebbero le
+# connessioni del pooler e si spegnerebbero i prezzi a vicenda.
+concurrency:
+  group: scraper-prezzi
+  cancel-in-progress: false
 
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ── Catena singola (avvio manuale) ─────────────────────────────────────────
+  singola:
+    name: Scrape ${{ inputs.chain }}
+    if: github.event_name == 'workflow_dispatch' && inputs.chain != 'all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: scraping/requirements.txt
-
-      - name: Installa dipendenze scraper
-        run: pip install -r scraping/requirements.txt
-
+      - run: pip install -r scraping/requirements.txt
       - name: Esegui scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          CHAIN="${{ inputs.chain || 'all' }}"
           FLAGS=""
           if [ "${{ inputs.dry_run }}" = "true" ]; then FLAGS="$FLAGS --dry-run"; fi
           if [ "${{ inputs.discover_only }}" = "true" ]; then FLAGS="$FLAGS --discover-only"; fi
-          python -m scraping.runner --chain "$CHAIN" $FLAGS
+          python -m scraping.runner --chain "${{ inputs.chain }}" $FLAGS
 
-      - name: Notifica fallimento
-        if: failure()
-        run: |
-          echo "::error::Scraper fallito — controlla i log sopra"
+  # ── Run completo: prune → catene in parallelo → dedup ──────────────────────
+  # Prima era tutto in sequenza in un unico job: ~90-120 minuti, e il 22/08 il
+  # run e' morto per timeout a meta' lavoro. Le catene sono indipendenti fra
+  # loro, quindi girano in parallelo e il tempo totale scende a quello della
+  # catena piu' lenta (Carrefour, ~35 min).
+  pulizia:
+    name: Prune storico
+    if: github.event_name == 'schedule' || inputs.chain == 'all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+      - run: pip install -r scraping/requirements.txt
+      - name: Prune
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scraping.runner --chain prune
+
+  catene:
+    name: ${{ matrix.chain }}
+    needs: pulizia
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # Una catena che fallisce non deve fermare le altre 11.
+      fail-fast: false
+      # Tetto al parallelismo: il pooler del database ha un numero limitato di
+      # connessioni, e con troppi job insieme cadono a meta' scrittura.
+      max-parallel: 4
+      matrix:
+        chain: [esselunga, conad, carrefour, eurospin, iper, coop, pam, penny, aldi, lidl, md, famila]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+      - run: pip install -r scraping/requirements.txt
+      - name: Scrape ${{ matrix.chain }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scraping.runner --chain ${{ matrix.chain }}
+
+  unifica:
+    name: Dedup prodotti
+    needs: catene
+    # Gira anche se qualche catena e' fallita: i duplicati delle altre vanno
+    # comunque uniti.
+    if: always() && needs.catene.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: scraping/requirements.txt
+      - run: pip install -r scraping/requirements.txt
+      - name: Dedup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scraping.runner --chain dedup
