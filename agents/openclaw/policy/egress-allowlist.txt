@@ -1,0 +1,38 @@
+# Hosts the OpenClaw agent container is allowed to reach.
+# Enforced at iptables/firewall level (see policy/setup-egress-firewall.sh).
+# One hostname per line. No wildcards: resolve subdomains explicitly.
+#
+# RULE: if you add a host here, you are saying "an LLM with shell access on
+# this box is allowed to talk to this service." Be VERY conservative.
+
+# ── Anthropic ───────────────────────────────────────────────────────────────
+api.anthropic.com
+
+# ── GitHub (for opening PRs on agent/* branches only) ──────────────────────
+api.github.com
+uploads.github.com
+
+# ── Telegram (alert dispatcher) ────────────────────────────────────────────
+api.telegram.org
+
+# ── Sentry (read errors from our own project) ──────────────────────────────
+sentry.io
+o1.ingest.sentry.io
+
+# ── Supermarket scraping targets (read-only, public) ───────────────────────
+api.cosicomodo.it
+www.cosicomodo.it
+www.esselunga.it
+spesaonline.esselunga.it
+www.conad.it
+www.carrefour.it
+www.eurospin.it
+www.iper.it
+www.famila.it
+
+# ── Product enrichment (open data) ─────────────────────────────────────────
+world.openfoodfacts.org
+images.openfoodfacts.org
+
+# ── Doppler / vault (secret retrieval at startup only) ─────────────────────
+api.doppler.com

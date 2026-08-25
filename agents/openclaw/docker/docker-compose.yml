@@ -1,0 +1,166 @@
+# Hardened OpenClaw deployment for SpesaSmart agents.
+#
+# Run with:    doppler run -- docker compose up -d
+# (doppler injects ANTHROPIC_API_KEY, AGENT_RO_DATABASE_URL, etc. as env)
+#
+# Network: a dedicated bridge with no internet access; the egress-firewall
+# sidecar (alpine + iptables) is the ONLY container that talks to the public
+# net, and it allows only the hosts in policy/egress-allowlist.txt.
+
+name: spesasmart-openclaw
+
+networks:
+  agent_net:
+    driver: bridge
+    internal: false   # set true once egress sidecar is configured (see policy/)
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+
+volumes:
+  openclaw_data:
+  openclaw_audit:
+
+services:
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        OPENCLAW_VERSION: ${OPENCLAW_VERSION:-latest}
+    image: spesasmart/openclaw:hardened
+    container_name: openclaw
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /home/openclaw/.cache:size=64m
+    cap_drop: ["ALL"]
+    cap_add: []                       # add nothing back
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined            # tighten later with custom profile
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 1.5
+    networks:
+      - agent_net
+    ports:
+      - "127.0.0.1:5234:5234"         # ONLY localhost; access via SSH tunnel
+    volumes:
+      - openclaw_data:/data
+      - openclaw_audit:/audit
+      - ../policy/egress-allowlist.txt:/etc/openclaw/egress-allowlist.txt:ro
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      AGENT_RO_DATABASE_URL: ${AGENT_RO_DATABASE_URL}
+      GITHUB_AGENT_TOKEN: ${GITHUB_AGENT_TOKEN}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET}
+      # Spend cap — watchdog kills container if exceeded
+      ANTHROPIC_DAILY_USD_CAP: ${ANTHROPIC_DAILY_USD_CAP:-10}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5234/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # Webhook proxy: ONLY public-facing service.
+  # Verifies HMAC, rate-limits, sanitizes payloads, then forwards to openclaw.
+  webhook-proxy:
+    build:
+      context: ../proxy
+    image: spesasmart/openclaw-proxy:latest
+    container_name: openclaw-proxy
+    restart: unless-stopped
+    user: "10002:10002"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    networks:
+      - agent_net
+    ports:
+      - "127.0.0.1:8443:8443"         # behind Caddy / Cloudflare Tunnel
+    depends_on:
+      openclaw:
+        condition: service_healthy
+    environment:
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET}
+      OPENCLAW_INTERNAL_URL: http://openclaw:5234
+      RATE_LIMIT_PER_MINUTE: "30"
+      ALLOWED_SOURCE_IPS: ${ALLOWED_SOURCE_IPS:-}   # comma-sep, optional
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Sidecar: monitors Anthropic spend & audit log; kills openclaw if cap breached
+  spend-watchdog:
+    image: python:3.12-alpine
+    container_name: openclaw-watchdog
+    restart: unless-stopped
+    user: "10003:10003"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agent_net
+    volumes:
+      - openclaw_audit:/audit:ro
+      - ../monitor:/app:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro    # to kill openclaw
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_DAILY_USD_CAP: ${ANTHROPIC_DAILY_USD_CAP:-10}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      TARGET_CONTAINER: openclaw
+    working_dir: /app
+    command:
+      - sh
+      - -c
+      - "pip install --no-cache-dir -q httpx docker && python spend-watchdog.py"
+
+  # Sidecar: detects anomalies in audit log (writes on read-only DB, egress denies, etc.)
+  audit-anomaly:
+    image: python:3.12-alpine
+    container_name: openclaw-audit
+    restart: unless-stopped
+    user: "10004:10004"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agent_net
+    volumes:
+      - openclaw_audit:/audit:ro
+      - ../monitor:/app:ro
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    working_dir: /app
+    command:
+      - sh
+      - -c
+      - "pip install --no-cache-dir -q httpx && python audit-anomaly.py"

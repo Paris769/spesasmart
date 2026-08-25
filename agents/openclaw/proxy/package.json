@@ -1,0 +1,22 @@
+{
+  "name": "openclaw-webhook-proxy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Public-facing proxy for OpenClaw: HMAC verification, rate limiting, payload sanitization",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/webhook-proxy.js",
+    "dev": "tsx watch webhook-proxy.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "@fastify/rate-limit": "^10.2.0",
+    "undici": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0"
+  }
+}
