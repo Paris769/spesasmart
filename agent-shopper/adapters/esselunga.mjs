@@ -50,18 +50,44 @@ export const SEL = {
  */
 export async function loginState(page) {
   return page.evaluate((sel) => {
-    const navbar = document.querySelector(sel.navbar);
-    const testo = navbar ? navbar.textContent || "" : "";
-    // Segnale positivo: saluto o voci dell'area utente.
-    if (/ciao[,\s]/i.test(testo)) return "logged";
-    if (document.querySelector("[href*='logout'], [href*='account/dashboard']")) return "logged";
-    // Segnale negativo: bottone "Accedi" renderizzato.
+    const visibile = (el) => {
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none";
+    };
+
+    // Segnale NEGATIVO prioritario: un "Accedi" VISIBILE significa che il sito
+    // ci considera ospiti. Conta solo se e' davvero sullo schermo: la home
+    // contiene anche un <a aria-label="Accedi"> nascosto, che da solo non dice
+    // nulla. E la priorita' sul negativo evita l'errore opposto, cioe' fidarsi
+    // di un link all'area clienti che da ospite porta proprio al login.
     let accedi = false;
     document.querySelectorAll(sel.loginButtons).forEach((b) => {
       const t = ((b.textContent || "") + " " + (b.getAttribute("aria-label") || "")).toLowerCase();
-      if (t.includes("accedi")) accedi = true;
+      if (t.includes("accedi") && visibile(b)) accedi = true;
     });
     if (accedi) return "guest";
+
+    // Segnali POSITIVI forti: saluto personale, logout reale, area clienti.
+    const navbar = document.querySelector(sel.navbar);
+    const testo = navbar ? navbar.textContent || "" : "";
+    if (/ciao[,\s]/i.test(testo)) return "logged";
+    if (document.querySelector("[href*='logout']")) return "logged";
+    const vociUtente = [...document.querySelectorAll("a, button")].some((e) =>
+      /il mio account|i miei ordini|esci/i.test((e.textContent || "").trim())
+    );
+    if (vociUtente) return "logged";
+
+    // Il cookie SSO di Esselunga vale "maybe" quando la sessione NON e' ancora
+    // autenticata: trattarlo come positivo faceva partire l'agente da ospite.
+    const ck = document.cookie || "";
+    const m = ck.match(/gescliweb\.sso\.is-logged-user=([^;]+)/);
+    if (m) {
+      const v = decodeURIComponent(m[1]).trim().toLowerCase();
+      if (["true", "yes", "1", "y"].includes(v)) return "logged";
+      if (["maybe", "false", "no", "0"].includes(v)) return "guest";
+    }
+
     return "unknown"; // pagina non ancora renderizzata: non decidere
   }, SEL);
 }

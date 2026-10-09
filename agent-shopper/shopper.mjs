@@ -207,13 +207,25 @@ async function goto(page, url, { tries = 3 } = {}) {
   throw new Error(`navigazione fallita (${tries} tentativi): ${String(lastErr).slice(0, 90)}`);
 }
 
-/** Attende il login dell'utente. Solo conferma POSITIVA della sessione. */
+/** Attende il login dell'utente. Solo conferma POSITIVA della sessione.
+ *  Servono DUE letture "logged" consecutive: durante il primo caricamento la
+ *  SPA monta la pagina a pezzi e una singola lettura poteva dichiarare un
+ *  accesso inesistente. */
 async function waitForLogin(page, adapter, timeoutMs = 300000) {
   const t0 = Date.now();
   let ultimoAvviso = 0;
+  let conferme = 0;
   while (Date.now() - t0 < timeoutMs) {
     const st = await adapter.loginState(page).catch(() => "unknown");
-    if (st === "logged") return true;
+    if (st === "logged") {
+      if (++conferme >= 2) return true;
+    } else {
+      conferme = 0;
+    }
+    if (st === "logged") {
+      await sleep(1500);
+      continue;
+    }
     const passati = Math.round((Date.now() - t0) / 1000);
     if (passati - ultimoAvviso >= 30) {
       ultimoAvviso = passati;
