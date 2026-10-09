@@ -310,6 +310,9 @@ export interface ReceiptResult {
   total_amount: number | null;
   items: ReceiptItem[];
   items_count: number;
+  /** Presente solo se la chiamata passava l'email: la spesa e' stata salvata
+   *  nello storico (vedi parseReceiptFor). I backend vecchi non lo inviano. */
+  purchase_id?: string | null;
 }
 
 export interface PriceComparison {
@@ -532,3 +535,296 @@ export const getNearbyOffers = (
     })
     .then((r) => r.data);
 
+
+// -- Errori API: lettura difensiva di status/detail ---------------------------
+
+export interface ApiErrorInfo {
+  /** HTTP status, null se la richiesta non e' mai arrivata a destinazione. */
+  status: number | null;
+  /** Campo "detail" di FastAPI quando e' una stringa (es. "assistant_unavailable"). */
+  detail: string | null;
+  /** true su timeout/annullamento: il backend Render potrebbe essere in risveglio. */
+  timeout: boolean;
+  /** true quando non c'e' stata risposta (rete assente, CORS, server giu'). */
+  network: boolean;
+}
+
+/** Normalizza un errore axios. Non lancia: usabile dentro i catch. */
+export function apiError(err: unknown): ApiErrorInfo {
+  if (axios.isAxiosError(err)) {
+    const body = err.response?.data as { detail?: unknown } | undefined;
+    const rawDetail = body && typeof body === "object" ? body.detail : undefined;
+    return {
+      status: err.response?.status ?? null,
+      detail: typeof rawDetail === "string" ? rawDetail : null,
+      timeout: err.code === "ECONNABORTED" || err.code === "ETIMEDOUT",
+      network: !err.response,
+    };
+  }
+  return { status: null, detail: null, timeout: false, network: false };
+}
+
+/** Frontend (Vercel) e backend (Render) si deployano separatamente: una rotta
+ *  nuova puo' ancora non esistere. 404/405/501 = "backend vecchio", non un
+ *  errore dell'utente. */
+export function isMissingEndpoint(info: ApiErrorInfo): boolean {
+  return info.status === 404 || info.status === 405 || info.status === 501;
+}
+
+// -- Assistente AI (/assistant/chat) -----------------------------------------
+
+/** Il loop di tool use lato server e' lento: serve piu' dei 75 s del client. */
+export const ASSISTANT_TIMEOUT_MS = 90000;
+
+export interface AssistantMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AssistantAction {
+  tool?: string | null;
+  summary?: string | null;
+  ok?: boolean | null;
+}
+
+export type RebuildMatchKind =
+  | "same_product_on_offer"
+  | "same_brand_on_offer"
+  | "similar_on_offer"
+  | "no_offer_same_product"
+  | "not_found";
+
+export interface RebuildOriginal {
+  product_id?: string | null;
+  name?: string | null;
+  brand?: string | null;
+  price?: number | null;
+}
+
+export interface RebuildChosen {
+  product_id?: string | null;
+  name?: string | null;
+  brand?: string | null;
+  image_url?: string | null;
+  price?: number | null;
+  original_price?: number | null;
+  discount_pct?: number | null;
+  price_per_unit?: number | null;
+  promo_label?: string | null;
+  promo_expires?: string | null;
+  chain_slug?: string | null;
+  chain_name?: string | null;
+  store_id?: string | null;
+  store_name?: string | null;
+  distance_km?: number | null;
+}
+
+export interface RebuildItem {
+  query_name?: string | null;
+  original?: RebuildOriginal | null;
+  chosen?: RebuildChosen | null;
+  /** string oltre all'union: un backend piu' nuovo puo' aggiungere casi. */
+  match_kind?: RebuildMatchKind | string | null;
+  saving_vs_original?: number | null;
+  brand_kept?: boolean | null;
+  promo_verdict?: PromoVerdict | string | null;
+  note?: string | null;
+}
+
+export interface RebuildSummary {
+  items_total?: number | null;
+  on_offer_count?: number | null;
+  brand_kept_count?: number | null;
+  brand_changed_count?: number | null;
+  not_found_count?: number | null;
+  total_estimated?: number | null;
+  total_without_offers?: number | null;
+  estimated_saving?: number | null;
+}
+
+export interface RebuildResultData {
+  items?: RebuildItem[] | null;
+  summary?: RebuildSummary | null;
+}
+
+export interface AssistantNeeds {
+  /** string oltre all'union: casi nuovi non devono rompere la UI. */
+  type?: "email" | "location" | "no_purchases" | string | null;
+  message?: string | null;
+}
+
+export interface AssistantChatResponse {
+  reply?: string | null;
+  actions?: AssistantAction[] | null;
+  plan?: QuickOptimizeResult | null;
+  rebuild?: RebuildResultData | null;
+  needs?: AssistantNeeds | null;
+}
+
+export interface AssistantChatInput {
+  message: string;
+  email?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  radius_km?: number | null;
+  history?: AssistantMessage[] | null;
+}
+
+/** Chat con l'assistente. Puo' rispondere 503 {"detail":"assistant_unavailable"}
+ *  quando la chiave AI non e' configurata, e 429 su rate limit: chi chiama DEVE
+ *  avere un percorso alternativo senza LLM (vedi AssistantBox). */
+export const assistantChat = (
+  input: AssistantChatInput
+): Promise<AssistantChatResponse> =>
+  api
+    .post<AssistantChatResponse>(
+      "/assistant/chat",
+      {
+        message: input.message,
+        ...(input.email ? { email: input.email } : {}),
+        ...(input.lat != null ? { lat: input.lat } : {}),
+        ...(input.lng != null ? { lng: input.lng } : {}),
+        ...(input.radius_km != null ? { radius_km: input.radius_km } : {}),
+        ...(input.history && input.history.length ? { history: input.history } : {}),
+      },
+      { timeout: ASSISTANT_TIMEOUT_MS }
+    )
+    .then((r) => r.data || {});
+
+// -- Storico spese (/purchases) ----------------------------------------------
+
+export interface PurchaseSummary {
+  id: string;
+  chain_slug?: string | null;
+  chain_name?: string | null;
+  purchase_date?: string | null;
+  total?: number | null;
+  source?: string | null;
+  created_at?: string | null;
+  items_count?: number | null;
+}
+
+export interface PurchaseItemRow {
+  id?: string | null;
+  name?: string | null;
+  brand?: string | null;
+  quantity?: number | null;
+  unit_price?: number | null;
+  product_id?: string | null;
+}
+
+export interface PurchaseDetail extends PurchaseSummary {
+  items?: PurchaseItemRow[] | null;
+}
+
+export interface PurchaseItemInput {
+  name: string;
+  brand?: string;
+  quantity?: number;
+  unit_price?: number;
+  product_id?: string;
+}
+
+export interface CreatePurchaseInput {
+  email: string;
+  chain_slug?: string | null;
+  purchase_date?: string | null;
+  total?: number | null;
+  source?: string | null;
+  items: PurchaseItemInput[];
+}
+
+export const getPurchases = (email: string, limit = 20): Promise<PurchaseSummary[]> =>
+  api
+    .get<{ purchases?: PurchaseSummary[] } | PurchaseSummary[]>("/purchases", {
+      params: { email, limit },
+    })
+    .then((r) => (Array.isArray(r.data) ? r.data : r.data?.purchases || []));
+
+/** Ultima spesa salvata. 404 {"detail":"no_purchases"} se lo storico e' vuoto. */
+export const getLastPurchase = (email: string): Promise<PurchaseDetail> =>
+  api.get<PurchaseDetail>("/purchases/last", { params: { email } }).then((r) => r.data);
+
+/** Dettaglio di una spesa specifica. NON fa parte del contratto minimo del
+ *  backend: chi chiama deve gestire isMissingEndpoint() e ripiegare su
+ *  /purchases/last quando la spesa richiesta e' la piu' recente. */
+export const getPurchase = (id: string, email: string): Promise<PurchaseDetail> =>
+  api
+    .get<PurchaseDetail>(`/purchases/${encodeURIComponent(id)}`, { params: { email } })
+    .then((r) => r.data);
+
+export const createPurchase = (
+  input: CreatePurchaseInput
+): Promise<{ id?: string; items_count?: number }> =>
+  api
+    .post<{ id?: string; items_count?: number }>("/purchases", {
+      email: input.email,
+      ...(input.chain_slug ? { chain_slug: input.chain_slug } : {}),
+      ...(input.purchase_date ? { purchase_date: input.purchase_date } : {}),
+      ...(input.total != null ? { total: input.total } : {}),
+      ...(input.source ? { source: input.source } : {}),
+      items: input.items,
+    })
+    .then((r) => r.data || {});
+
+/** Scontrino -> articoli. Con `email` il backend salva anche la spesa e
+ *  rimanda `purchase_id`; senza email estrae soltanto i dati.
+ *  parseReceipt() resta invariata per lo scanner. */
+export const parseReceiptFor = (
+  file: File,
+  email?: string | null
+): Promise<ReceiptResult> => {
+  const form = new FormData();
+  form.append("file", file);
+  if (email) form.append("email", email);
+  return api
+    .post<ReceiptResult>("/receipts/parse", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: ASSISTANT_TIMEOUT_MS,
+    })
+    .then((r) => r.data);
+};
+
+// -- Rifai la spesa con le offerte (/rebuild/from-items) ---------------------
+
+export const rebuildFromItems = (
+  items: PurchaseItemInput[],
+  lat: number,
+  lng: number,
+  radiusKm?: number | null,
+  opts?: { chain_slug?: string | null; keep_brand?: boolean }
+): Promise<RebuildResultData> =>
+  api
+    .post<RebuildResultData>(
+      "/rebuild/from-items",
+      {
+        items,
+        lat,
+        lng,
+        ...(radiusKm != null ? { radius_km: radiusKm } : {}),
+        ...(opts?.chain_slug ? { chain_slug: opts.chain_slug } : {}),
+        ...(opts?.keep_brand != null ? { keep_brand: opts.keep_brand } : {}),
+      },
+      { timeout: ASSISTANT_TIMEOUT_MS }
+    )
+    .then((r) => r.data || {});
+
+/** Normalizza gli articoli di una spesa nel formato di /rebuild/from-items,
+ *  scartando le righe senza nome utile (sconti, totali, resi). */
+export function purchaseItemsToRebuildItems(
+  items?: PurchaseItemRow[] | null
+): PurchaseItemInput[] {
+  if (!Array.isArray(items)) return [];
+  const out: PurchaseItemInput[] = [];
+  for (const it of items) {
+    const name = (it?.name || "").trim();
+    if (name.length < 2) continue;
+    const row: PurchaseItemInput = { name };
+    if (it.brand) row.brand = it.brand;
+    if (it.quantity != null && it.quantity > 0) row.quantity = it.quantity;
+    if (it.unit_price != null && it.unit_price > 0) row.unit_price = it.unit_price;
+    if (it.product_id) row.product_id = it.product_id;
+    out.push(row);
+  }
+  return out;
+}

@@ -6,16 +6,24 @@ POST /receipts/parse
   - Estrae: negozio, data, articoli (nome, prezzo, quantità)
   - Tenta il match degli articoli con i prodotti nel DB
   - Ritorna dati strutturati pronti per la visualizzazione
+  - Se viene passato il campo `email`, salva anche la spesa nello storico
+    (purchases/purchase_items, source='receipt') e ritorna `purchase_id`.
+    Senza `email` non scrive nulla: il comportamento resta quello storico.
 """
 import base64
 import json
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.endpoints.purchases import (
+    check_purchase_quota,
+    insert_purchase,
+    validate_purchase_email,
+)
 from app.core.config import settings
 from app.db.session import get_db
 
@@ -51,13 +59,51 @@ Regole:
 - is_discount = true per righe con importo negativo (sconti, promo)"""
 
 
+def _parse_date(value) -> Optional[date]:
+    """La data dello scontrino arriva come stringa dal modello: se non e' una
+    ISO valida la spesa viene salvata senza data (purchase_date NULL)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
+
+
+async def _resolve_chain_slug(db: AsyncSession, chain_name: Optional[str]) -> Optional[str]:
+    """Catena letta dallo scontrino ('Esselunga') -> slug reale della tabella
+    chains, cosi' lo storico e' confrontabile con prezzi e offerte. Se non la
+    riconosciamo, chain_slug resta NULL (meglio vuoto che inventato)."""
+    name = (chain_name or "").strip().lower()
+    if not name:
+        return None
+    result = await db.execute(
+        text("""
+            SELECT slug FROM chains
+            WHERE lower(slug) = :name OR lower(name) = :name
+            LIMIT 1
+        """),
+        {"name": name},
+    )
+    row = result.first()
+    return row[0] if row else None
+
+
 @router.post("/parse")
 async def parse_receipt(
     file: UploadFile = File(...),
+    email: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     if not settings.ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="Servizio OCR non configurato (ANTHROPIC_API_KEY mancante)")
+
+    # Email opzionale: se c'e', validiamo e controlliamo la quota PRIMA di
+    # spendere una chiamata al modello.
+    persist_email: Optional[str] = None
+    if email is not None and email.strip():
+        persist_email = validate_purchase_email(email)
+        await check_purchase_quota(db, persist_email)
 
     content_type = file.content_type or ""
     if content_type not in ALLOWED_MIME:
@@ -130,6 +176,37 @@ async def parse_receipt(
             "matched_product": dict(match) if match else None,
         })
 
+    # Persistenza nello storico spese: solo se e' stata passata un'email.
+    purchase_id: Optional[str] = None
+    persist_items = [
+        {
+            "name":       (it.get("name") or "").strip(),
+            "quantity":   it.get("quantity"),
+            "unit_price": it.get("unit_price"),
+            "line_total": it.get("total_price"),
+        }
+        for it in real_items
+        if (it.get("name") or "").strip()
+    ]
+    if persist_email and persist_items:
+        try:
+            created = await insert_purchase(
+                db,
+                email=persist_email,
+                items=persist_items,
+                chain_slug=await _resolve_chain_slug(db, parsed.get("store_chain")),
+                purchase_date=_parse_date(parsed.get("purchase_date")),
+                total=parsed.get("total_amount"),
+                source="receipt",
+                raw=parsed,
+            )
+            purchase_id = created["id"]
+        except Exception:
+            # Un errore di scrittura non deve far perdere l'OCR appena pagato:
+            # rispondiamo con i dati parsati e purchase_id a null.
+            await db.rollback()
+            purchase_id = None
+
     return {
         "store_name":    parsed.get("store_name"),
         "store_address": parsed.get("store_address"),
@@ -138,4 +215,5 @@ async def parse_receipt(
         "total_amount":  parsed.get("total_amount"),
         "items":         matched,
         "items_count":   len(matched),
+        "purchase_id":   purchase_id,
     }

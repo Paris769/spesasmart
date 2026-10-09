@@ -2,13 +2,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
-import { BadgePercent, Bot, ListChecks, MapPin, ScanLine, Search } from "lucide-react";
+import { BadgePercent, Bot, ListChecks, MapPin, Receipt, ScanLine, Search } from "lucide-react";
 
 const links = [
   { href: "/", label: "Cerca", Icon: Search },
   { href: "/offerte", label: "Offerte", Icon: BadgePercent },
   { href: "/lista", label: "Lista", Icon: ListChecks },
   { href: "/agente", label: "Agente", Icon: Bot },
+  { href: "/spese", label: "Spese", Icon: Receipt },
   { href: "/mappa", label: "Mappa", Icon: MapPin },
   { href: "/scanner", label: "Scanner", Icon: ScanLine },
 ];
@@ -20,7 +21,7 @@ export default function BottomNav() {
       className="fixed bottom-0 inset-x-0 z-50 bg-white border-t border-stone-200 shadow-nav"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <div className="max-w-5xl mx-auto grid grid-cols-6 h-16">
+      <div className="max-w-5xl mx-auto grid grid-cols-7 h-16">
         {links.map(({ href, label, Icon }) => {
           const active = path === href;
           return (
@@ -28,12 +29,12 @@ export default function BottomNav() {
               key={href}
               href={href}
               className={clsx(
-                "flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors",
+                "flex flex-col items-center justify-center gap-0.5 text-[10px] sm:text-[11px] font-medium leading-none transition-colors",
                 active ? "text-primary" : "text-stone-500"
               )}
             >
               <Icon
-                size={22}
+                size={20}
                 strokeWidth={active ? 2.4 : 1.9}
                 className="transition-transform active:scale-90"
               />

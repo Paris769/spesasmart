@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { searchProducts, getProductPrices, Product, PriceResult, COLD_START_HINT_MS } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG } from "@/lib/retailServices";
 import { useAppStore } from "@/lib/store";
+import AssistantBox from "@/components/ui/AssistantBox";
 import LocationBar from "@/components/ui/LocationBar";
 import PriceCard from "@/components/ui/PriceCard";
 import ChainCoverageBanner from "@/components/ui/ChainCoverageBanner";
@@ -416,6 +417,10 @@ export default function HomePage() {
   return (
     <div className="flex flex-col gap-4">
       {showSmartHome && <SmartHome onQuickSearch={startSearch} />}
+      {/* Box assistente: subito SOTTO la ricerca hero (che resta il primo
+          gesto della home) e chiuso per default, cosi' occupa una sola riga
+          e non spinge giu' copertura catene e prezzi. */}
+      {showSmartHome && <AssistantBox />}
       {showSmartHome && <RecurringCta />}
       {showSmartHome && <ChainCoverageBanner />}
 
