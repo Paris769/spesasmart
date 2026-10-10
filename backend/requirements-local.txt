@@ -1,0 +1,12 @@
+# Dipendenze del SOLO percorso "assistente su abbonamento Claude" (uso locale).
+#
+# NON vanno in requirements.txt: su Render l'assistente deve usare l'API a
+# pagamento (ANTHROPIC_API_KEY) o restare spento. I token dell'abbonamento
+# sono personali, stanno nel Credential Manager di questa macchina e non
+# devono finire su un server che serve altri utenti.
+#
+# Uso:  pip install -r backend/requirements.txt -r backend/requirements-local.txt
+claude-agent-sdk>=0.2.165
+keyring>=25.0.0
+requests>=2.31.0
+pywin32>=306; sys_platform == "win32"

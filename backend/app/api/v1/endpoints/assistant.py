@@ -12,8 +12,22 @@ services/assistant_tools.py e chiamano DIRETTAMENTE le funzioni Python degli
 altri moduli (niente HTTP verso noi stessi: su Render free il backend dorme e
 una chiamata interna costerebbe ~60s di cold start).
 
-COSTO: ogni richiesta e' una o piu' chiamate all'API Anthropic, cioe' denaro
-vero. Di conseguenza:
+DUE MOTORI DI INFERENZA (campo `engine` nella risposta)
+  * "api"          -> API Anthropic a pagamento (ANTHROPIC_API_KEY). E' il
+                      percorso di PRODUZIONE, l'unico legittimo quando l'app
+                      serve utenti diversi dal proprietario della chiave.
+  * "subscription" -> ABBONAMENTO Claude Pro/Max PERSONALE dell'utente, via
+                      claude-agent-sdk + OAuth (services/assistant_sdk.py).
+                      Costo zero, ma e' una CREDENZIALE PERSONALE: va bene
+                      SOLO per uso personale e locale. Non va usato per
+                      servire utenti pubblici; per un'app pubblica serve
+                      l'API a pagamento. L'avvertenza completa sta nel
+                      docstring di services/assistant_sdk.py.
+La scelta e' governata da ASSISTANT_BACKEND ("auto" default | "api" |
+"subscription" | "off"); in "auto" la chiave API, se c'e', vince sempre.
+
+COSTO: sul percorso "api" ogni richiesta e' una o piu' chiamate all'API
+Anthropic, cioe' denaro vero. Di conseguenza:
   - rate limit in-memory NON opzionale (12/min per IP + tetto di processo);
   - il modello vede riassunti compatti dei risultati, non i payload integrali
     (vedi assistant_tools.model_view);
@@ -109,6 +123,27 @@ _GLOBAL_MAX_REQUESTS = _env_int("ASSISTANT_RATE_PER_HOUR", 120)  # processo/ora
 _rate_buckets: dict[str, list[float]] = {}
 _global_bucket: list[float] = []
 
+# Tetti del percorso ABBONAMENTO. Piu' permissivi, ma NON assenti: qui non c'e'
+# una bolletta da contenere (costo zero), c'e' la QUOTA dell'abbonamento
+# personale dell'utente, condivisa con tutto il resto che fa con Claude.
+# Esaurirla da qui significa restare senza Claude altrove, quindi il tetto
+# resta - solo piu' alto, perche' l'unico utente e' il proprietario
+# dell'abbonamento e un suo uso intenso non e' un abuso.
+# Regolabili con ASSISTANT_SUB_RATE_PER_MIN / ASSISTANT_SUB_RATE_PER_HOUR.
+_SUB_RATE_MAX_REQUESTS = _env_int("ASSISTANT_SUB_RATE_PER_MIN", 30)
+_SUB_GLOBAL_MAX_REQUESTS = _env_int("ASSISTANT_SUB_RATE_PER_HOUR", 300)
+
+# Quale motore di inferenza usare. "auto" = API se c'e' la chiave, altrimenti
+# abbonamento; "api"/"subscription" forzano; "off" spegne l'assistente.
+_VALID_BACKENDS = frozenset({"auto", "api", "subscription", "off"})
+
+
+def _backend_pref() -> str:
+    """Letta a ogni richiesta e non all'import: cosi' si cambia motore senza
+    riavviare il processo (utile mentre si collega l'abbonamento)."""
+    pref = (os.getenv("ASSISTANT_BACKEND", "auto") or "auto").strip().lower()
+    return pref if pref in _VALID_BACKENDS else "auto"
+
 
 def _client_ip(request: Request) -> str:
     # Su Render il backend sta dietro un proxy: il client reale e' il primo
@@ -119,13 +154,23 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _check_rate_limit(ip: str) -> None:
+def _check_rate_limit(
+    ip: str,
+    max_per_min: int = _RATE_MAX_REQUESTS,
+    max_per_hour: int = _GLOBAL_MAX_REQUESTS,
+) -> None:
+    """Finestra scorrevole per IP + tetto di processo.
+
+    I tetti sono parametrici perche' i due motori hanno limiti diversi (vedi
+    _SUB_RATE_MAX_REQUESTS); i bucket sono invece condivisi, perche' in una
+    data configurazione un motore solo e' attivo.
+    """
     now = time.monotonic()
     _global_bucket[:] = [t for t in _global_bucket if now - t < _GLOBAL_WINDOW_S]
-    if len(_global_bucket) >= _GLOBAL_MAX_REQUESTS:
+    if len(_global_bucket) >= max_per_hour:
         raise HTTPException(status_code=429, detail="Troppe richieste, riprova piu' tardi")
     bucket = [t for t in _rate_buckets.get(ip, []) if now - t < _RATE_WINDOW_S]
-    if len(bucket) >= _RATE_MAX_REQUESTS:
+    if len(bucket) >= max_per_min:
         raise HTTPException(status_code=429, detail="Troppe richieste, riprova piu' tardi")
     bucket.append(now)
     _rate_buckets[ip] = bucket
@@ -232,6 +277,16 @@ def _clean_history(history: Optional[list[HistoryTurn]]) -> list[HistoryTurn]:
 
 def _supports_effort(model: str) -> bool:
     return model.startswith(_EFFORT_MODEL_PREFIXES)
+
+
+def _anthropic_sdk() -> Any:
+    """Il pacchetto `anthropic`, o None se non installato."""
+    try:
+        import anthropic
+    except ImportError:
+        logger.error("assistant: pacchetto anthropic non installato")
+        return None
+    return anthropic
 
 
 def _tool_result_json(view: Any) -> str:
@@ -466,6 +521,67 @@ async def _run_chat(
 
 # ───────────────────────────── endpoint ─────────────────────────────
 
+async def _pick_engine(ip: str) -> str:
+    """Decide il motore di inferenza e applica il rate limit che gli spetta.
+
+    Ordine (ASSISTANT_BACKEND = "auto"):
+      1. ANTHROPIC_API_KEY presente -> "api" (percorso di produzione, invariato);
+      2. abbonamento collegato      -> "subscription" (costo zero, uso personale);
+      3. altrimenti 503, con un dettaglio che distingue i due casi.
+
+    Il rate limit viene applicato PRIMA di leggere lo stato dell'abbonamento,
+    perche' quella lettura e' I/O (keyring): cosi' non e' raggiungibile a
+    raffica da fuori.
+
+    Solleva HTTPException(503) con detail:
+      "assistant_unavailable" -> non c'e' nulla di configurato (o backend=off);
+      "assistant_needs_auth"  -> c'e' tutto, manca il click su "Authorize".
+    """
+    pref = _backend_pref()
+
+    if pref == "off":
+        _check_rate_limit(ip)
+        logger.info("assistant: ASSISTANT_BACKEND=off")
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+
+    api_ready = (
+        pref in ("auto", "api")
+        and bool(settings.ANTHROPIC_API_KEY)
+        and _anthropic_sdk() is not None
+    )
+    if api_ready:
+        _check_rate_limit(ip)
+        return "api"
+
+    if pref == "api":
+        # Forzato sull'API ma senza chiave: non si ripiega sull'abbonamento.
+        _check_rate_limit(ip)
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+
+    # Percorso abbonamento. Import locale: claude-agent-sdk/keyring/requests non
+    # sono in requirements.txt (in produzione non ci sono), quindi l'assenza
+    # deve degradare, non impedire l'avvio dell'app ne' rompere il percorso API.
+    _check_rate_limit(ip, _SUB_RATE_MAX_REQUESTS, _SUB_GLOBAL_MAX_REQUESTS)
+    try:
+        from app.services import assistant_sdk
+    except Exception as exc:
+        logger.warning(
+            "assistant: assistant_sdk non importabile (%s: %s)", type(exc).__name__, exc
+        )
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+
+    if not assistant_sdk.is_installed():
+        logger.info("assistant: percorso abbonamento non installato su questa macchina")
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+
+    status = await assistant_sdk.subscription_status()
+    if assistant_sdk.is_usable(status):
+        return "subscription"
+
+    logger.info("assistant: abbonamento non collegato (state=%s)", status.get("state"))
+    raise HTTPException(status_code=503, detail="assistant_needs_auth")
+
+
 @router.post("/chat")
 async def assistant_chat(
     body: ChatRequest,
@@ -474,21 +590,20 @@ async def assistant_chat(
 ):
     """Chat con tool use: l'assistente esegue azioni sul sito.
 
-    Risposta: {reply, actions, plan?, rebuild?, last_purchase?, saved_list?, needs?}
+    Risposta: {reply, actions, engine, plan?, rebuild?, last_purchase?,
+    saved_list?, needs?} — `engine` e' "api" o "subscription" e dice quale
+    motore ha risposto (campo additivo: il resto del contratto non cambia).
 
-    Rate limit in-memory PER-PROCESSO (12/min per IP + 240/h globali): oltre il
-    limite risponde 429. Senza ANTHROPIC_API_KEY risponde 503
-    {"detail": "assistant_unavailable"} e il frontend fa fallback.
+    Rate limit in-memory PER-PROCESSO: 12/min per IP + 120/h sul percorso API,
+    30/min + 300/h sul percorso abbonamento (dove non c'e' una bolletta da
+    difendere ma la quota personale dell'utente). Oltre il limite: 429.
+
+    503 {"detail": "assistant_unavailable"} se non c'e' alcun motore
+    configurato, 503 {"detail": "assistant_needs_auth"} se c'e' il percorso
+    abbonamento ma manca l'autorizzazione. Il frontend fa fallback in entrambi
+    i casi (tratta ogni 503 allo stesso modo).
     """
-    _check_rate_limit(_client_ip(request))
-
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="assistant_unavailable")
-    try:
-        import anthropic
-    except ImportError:
-        logger.error("assistant: pacchetto anthropic non installato")
-        raise HTTPException(status_code=503, detail="assistant_unavailable")
+    engine = await _pick_engine(_client_ip(request))
 
     message = body.message.strip()
     if not message:
@@ -496,7 +611,8 @@ async def assistant_chat(
     history = _clean_history(body.history)
 
     # Pre-flight: l'utente si riferisce alle spese passate ma non abbiamo
-    # l'email. Rispondiamo subito, ZERO chiamate all'LLM (zero costo).
+    # l'email. Rispondiamo subito, ZERO chiamate all'LLM (zero costo, e sul
+    # percorso abbonamento zero quota consumata).
     if not body.email and _needs_history(message):
         logger.info("assistant: needs=email (pre-flight) — msg=%r", _log_safe(message))
         needs = {
@@ -506,11 +622,28 @@ async def assistant_chat(
                 "salvata (o con cui hai caricato lo scontrino). Me la scrivi?"
             ),
         }
-        return {"reply": needs["message"], "actions": [], "needs": needs}
+        return {"reply": needs["message"], "actions": [], "engine": engine, "needs": needs}
 
     allow_write = _asked_to_save(message, history)
-    state = _ChatState()
 
+    if engine == "subscription":
+        return await _chat_via_subscription(db, body, message, history, allow_write)
+    return await _chat_via_api(db, body, message, history, allow_write)
+
+
+async def _chat_via_api(
+    db: AsyncSession,
+    body: ChatRequest,
+    message: str,
+    history: list[HistoryTurn],
+    allow_write: bool,
+) -> dict:
+    """Percorso API a pagamento: il loop di tool use storico, invariato."""
+    anthropic = _anthropic_sdk()
+    if anthropic is None:                       # difesa: _pick_engine lo esclude
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+
+    state = _ChatState()
     client = anthropic.AsyncAnthropic(
         api_key=settings.ANTHROPIC_API_KEY,
         timeout=PER_CALL_TIMEOUT_S,
@@ -538,13 +671,89 @@ async def assistant_chat(
     reply = state.reply.strip() or _fallback_reply(state.actions, state.needs)
 
     logger.info(
-        "assistant: ok — %d iterazioni, tool=%s, tokens in/out=%d/%d, msg=%r",
+        "assistant: ok (api) — %d iterazioni, tool=%s, tokens in/out=%d/%d, msg=%r",
         state.iterations, sorted(state.called) or "-",
         state.usage_in, state.usage_out, _log_safe(message),
     )
 
-    out: dict[str, Any] = {"reply": reply, "actions": state.actions}
+    out: dict[str, Any] = {"reply": reply, "actions": state.actions, "engine": "api"}
     out.update(state.client_payloads)   # plan / rebuild / last_purchase / saved_list
     if state.needs:
         out["needs"] = state.needs
+    return out
+
+
+async def _chat_via_subscription(
+    db: AsyncSession,
+    body: ChatRequest,
+    message: str,
+    history: list[HistoryTurn],
+    allow_write: bool,
+) -> dict:
+    """Percorso ABBONAMENTO (costo zero, uso personale/locale).
+
+    Stessi gate del percorso API: rate limit (gia' applicato in _pick_engine),
+    pre-flight email (gia' fatto), gate sulle scritture (allow_write, che
+    assistant_sdk applica dentro gli handler dei tool) e timeout (dentro
+    assistant_sdk, con l'aggiunta di questo tetto esterno come rete).
+
+    Il system prompt e' lo STESSO del percorso API: viene passato nel contesto
+    invece di essere importato da assistant_sdk, per non duplicarlo e per non
+    creare un import circolare.
+    """
+    from app.services import assistant_sdk
+
+    context = {
+        "email": body.email,
+        "lat": body.lat,
+        "lng": body.lng,
+        "radius_km": body.radius_km,
+        "allow_write": allow_write,
+        "system_prompt": SYSTEM_PROMPT,
+    }
+
+    try:
+        out = await asyncio.wait_for(
+            assistant_sdk.run_subscription_chat(db, message, history, context),
+            # Rete esterna: assistant_sdk ha il suo timeout (piu' basso), qui
+            # sta solo per non restare appesi se il sottoprocesso si incanta.
+            timeout=assistant_sdk.SUB_TOTAL_TIMEOUT_S + 15.0,
+        )
+    except assistant_sdk.SubscriptionNeedsAuth as exc:
+        logger.warning("assistant: abbonamento da riautorizzare (%s)", exc)
+        raise HTTPException(status_code=503, detail="assistant_needs_auth")
+    except assistant_sdk.SubscriptionError as exc:
+        logger.warning(
+            "assistant: percorso abbonamento non utilizzabile (%s: %s)",
+            type(exc).__name__, exc,
+        )
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+    except asyncio.TimeoutError:
+        logger.warning(
+            "assistant: timeout esterno sul percorso abbonamento — msg=%r",
+            _log_safe(message),
+        )
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+    except Exception as exc:
+        logger.warning(
+            "assistant: errore sul percorso abbonamento (%s: %s) — msg=%r",
+            type(exc).__name__, exc, _log_safe(message),
+        )
+        raise HTTPException(status_code=503, detail="assistant_unavailable")
+
+    actions = out.get("actions") or []
+    # Il testo di cortesia vive in un posto solo: assistant_sdk puo' tornare
+    # una reply vuota (timeout, max_turns, nessun testo prodotto) e qui ci
+    # mettiamo lo stesso fallback del percorso API.
+    out["reply"] = (out.get("reply") or "").strip() or _fallback_reply(
+        actions, out.get("needs")
+    )
+    out["actions"] = actions
+    out["engine"] = "subscription"
+
+    logger.info(
+        "assistant: ok (subscription) — tool=%s, msg=%r",
+        sorted({a.get("tool") for a in actions if a.get("tool")}) or "-",
+        _log_safe(message),
+    )
     return out
