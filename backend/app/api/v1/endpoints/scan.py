@@ -8,8 +8,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.core.freshness import fresh_price_sql
+from app.core.price_origin import (
+    avviso as avviso_origini,
+    descrizione_di,
+    origine_di,
+    sconto_affermabile_di,
+)
 
 router = APIRouter(prefix="/scan", tags=["scan"])
+
+# Come in products.py e offers.py: sotto questa soglia il prezzo e' un
+# placeholder o un errore di scraping, non un prezzo.
+MIN_VALID_PRICE = 0.10
 
 
 class PriceSubmit(BaseModel):
@@ -85,11 +96,26 @@ async def scan_barcode(
     if not product:
         return {"product": None, "prices": [], "message": "Prodotto non trovato"}
 
+    # Regole di serving allineate agli altri percorsi (products.py /search,
+    # offers.py /nearby): NOT quarantined, prezzo minimo valido, freschezza
+    # per catena. Era l'unico endpoint che non filtrava nulla, e con
+    # l'etichetta di provenienza accanto una riga messa in quarantena o
+    # vecchia di mesi diventava il prezzo piu' basso dell'elenco, dichiarato e
+    # tracciato, davanti a un utente che ha la confezione in mano.
+    params: dict = {
+        "pid": str(product["id"]),
+        "lat": lat,
+        "lng": lng,
+        "radius_m": radius_km * 1000,
+        "min_valid_price": MIN_VALID_PRICE,
+    }
+    fresh = fresh_price_sql(params, price_alias="p", chain_alias="c")
+
     prices_res = await db.execute(
-        text("""
+        text(f"""
             SELECT
                 p.price, p.original_price, p.promo_label, p.in_stock,
-                p.source, p.scraped_at,
+                p.source, p.promo_expires, p.scraped_at,
                 s.id   AS store_id,   s.name  AS store_name, s.address,
                 s.has_delivery, s.has_click_collect,
                 c.name AS chain_name, c.slug  AS chain_slug, c.shop_url,
@@ -102,6 +128,9 @@ async def scan_barcode(
             JOIN chains c ON s.chain_id  = c.id
             WHERE p.product_id = :pid
               AND p.is_current  = TRUE
+              AND NOT p.quarantined
+              AND p.price >= :min_valid_price
+              AND {fresh}
               AND s.is_active   = TRUE
               AND ST_DWithin(
                     s.coordinates::geography,
@@ -111,12 +140,31 @@ async def scan_barcode(
             ORDER BY p.price
             LIMIT 20
         """),
-        {"pid": str(product["id"]), "lat": lat, "lng": lng, "radius_m": radius_km * 1000},
+        params,
     )
+
+    prezzi = [dict(r) for r in prices_res.mappings().all()]
+
+    # Senza promo_expires nel SELECT una riga esselunga_web ereditata da
+    # volantino risulterebbe "prezzo spesa online": e' esattamente l'errore che
+    # price_origin esiste per evitare. Qui pesa doppio, perche' l'utente e'
+    # fisicamente in negozio col telefono in mano e scambiare un prezzo
+    # volantino per un prezzo di scaffale gli costa subito.
+    for p in prezzi:
+        p["origine"] = origine_di(p)
+        p["origine_label"] = descrizione_di(p)
+        # La riga porta original_price (vedi il SELECT), quindi la card puo'
+        # disegnare un prezzo barrato: il permesso di disegnarlo e'
+        # `sconto_affermabile`, ed e' PriceCard a leggerlo. Senza il campo
+        # quella card non mostra nessun barrato — prudente ma muto proprio
+        # dove l'utente e' in corsia e lo sconto, quando c'e', e' la cosa che
+        # sta cercando.
+        p["sconto_affermabile"] = sconto_affermabile_di(p)
 
     return {
         "product": product,
-        "prices": [dict(r) for r in prices_res.mappings().all()],
+        "prices": prezzi,
+        "avviso": avviso_origini([p["origine"] for p in prezzi]),
     }
 
 
@@ -175,20 +223,59 @@ async def submit_price(
     )
     await db.commit()
 
-    # 5. Statistiche di confronto (tutti i prezzi attuali per questo prodotto)
+    # 5. Statistiche di confronto.
+    # Min/media/max sono il giudizio che l'utente legge in corsia col prodotto
+    # in mano: le regole di serving sono quelle della GET qui sopra e del resto
+    # dell'app (NOT quarantined, prezzo minimo valido, negozi attivi,
+    # freschezza per catena). Senza quelle clausole il denominatore conteneva
+    # righe di negozi disattivati e cataloghi fermi da settimane (misurato nel
+    # collaudo: 1.827.246 righe eurospin_web correnti e ZERO fresche), quindi
+    # "sotto la media del 12,3%" non descriveva nessun mercato reale.
+    stats_params: dict = {"pid": prod_id, "min_valid_price": MIN_VALID_PRICE}
+    fresh_stats = fresh_price_sql(stats_params, price_alias="pr", chain_alias="c")
+    _WHERE_STATS = f"""
+            FROM prices pr
+            JOIN stores s ON s.id = pr.store_id
+            JOIN chains c ON c.id = s.chain_id
+            WHERE pr.product_id = :pid
+              AND pr.is_current = TRUE
+              AND NOT pr.quarantined
+              AND pr.price >= :min_valid_price
+              AND s.is_active = TRUE
+              AND {fresh_stats}
+    """
     stats_res = await db.execute(
-        text("""
+        text(f"""
             SELECT
-                COUNT(*)                        AS store_count,
-                MIN(price)                      AS price_min,
-                MAX(price)                      AS price_max,
-                ROUND(AVG(price)::numeric, 2)   AS price_avg
-            FROM prices
-            WHERE product_id = :pid AND is_current = TRUE
+                COUNT(*)                           AS store_count,
+                MIN(pr.price)                      AS price_min,
+                MAX(pr.price)                      AS price_max,
+                ROUND(AVG(pr.price)::numeric, 2)   AS price_avg
+            {_WHERE_STATS}
         """),
-        {"pid": prod_id},
+        stats_params,
     )
     stats = dict(stats_res.mappings().first())
+
+    # Le origini si decidono per RIGA, non per sola sorgente: era
+    # array_agg(DISTINCT source), e su una sorgente che contiene sia prezzi di
+    # scaffale sia offerte con prezzo barrato il set collassava a un elemento.
+    # Qui le combinazioni DISTINTE dei campi che decidono l'origine, sulle
+    # STESSE righe che compongono min/media/max: original_price e' portato solo
+    # quando e' una prova (> price), cosi' le combinazioni restano poche.
+    combo_res = await db.execute(
+        text(f"""
+            SELECT DISTINCT
+                   pr.source,
+                   pr.promo_expires,
+                   CASE WHEN pr.original_price > pr.price
+                        THEN pr.original_price END AS original_price,
+                   NULLIF(TRIM(pr.promo_label), '') AS promo_label
+            {_WHERE_STATS}
+        """),
+        stats_params,
+    )
+    origini_stats = [origine_di(r) for r in combo_res.mappings().all()]
 
     price_avg = float(stats["price_avg"] or body.price)
     delta_pct = round((body.price - price_avg) / price_avg * 100, 1) if price_avg else 0
@@ -212,5 +299,11 @@ async def submit_price(
                 if abs(delta_pct) < 1
                 else f"{'sopra' if delta_pct > 0 else 'sotto'} la media del {abs(delta_pct):.1f}%"
             ),
+            # price_avg e' la media fra listini online e offerte da volantino:
+            # non e' una grandezza che significhi qualcosa, e vs_avg e' testo
+            # finito che l'utente legge come un giudizio. L'avviso va accanto
+            # alla frase, non solo dentro i dati — e calcolato sulle righe che
+            # stanno DAVVERO dentro quei numeri, non su un insieme piu' ampio.
+            "avviso": avviso_origini(origini_stats),
         },
     }

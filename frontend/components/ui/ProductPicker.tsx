@@ -4,6 +4,7 @@ import { Plus, Search } from "lucide-react";
 import { Product, searchProducts } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { DEFAULT_LOCATION } from "@/lib/location";
+import { etichettaOrigine, parseOrigine } from "@/lib/priceOrigin";
 
 // Ricerca + ancoraggio prodotto riusabile (pattern estratto da agente/page.tsx):
 // input con autocomplete di prodotti REALI dal catalogo. Chi lo usa riceve o un
@@ -131,6 +132,25 @@ export default function ProductPicker({ placeholder, onPickProduct, onPickGeneri
                     <p className="text-[10px] text-stone-400">
                       {product.price_store_count} negoz{(product.price_store_count ?? 0) > 1 ? "i" : "io"}
                     </p>
+                    {/* Provenienza del "da EUR X": e' il numero su cui
+                        l'utente ancora la voce, e da qui finisce nel piano
+                        carrello. Si legge da min_price_origine, cioe' dalla
+                        riga che PRODUCE quel numero: best_price_origine e'
+                        l'etichetta di un altro record (`best` ordina per
+                        in_stock DESC, NULLS FIRST in Postgres; min_price
+                        filtra in_stock IS TRUE). Colonna stretta e shrink-0:
+                        una riga di testo breve, non un badge che la allarga. */}
+                    {etichettaOrigine(parseOrigine(product.min_price_origine)) && (
+                      <p
+                        className={`text-[10px] ${
+                          parseOrigine(product.min_price_origine) === "volantino"
+                            ? "font-semibold text-amber-700"
+                            : "text-stone-400"
+                        }`}
+                      >
+                        {etichettaOrigine(parseOrigine(product.min_price_origine))}
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <span className="text-[11px] font-medium text-stone-400 shrink-0">nessun prezzo</span>

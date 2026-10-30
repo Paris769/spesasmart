@@ -4,8 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { BadgePercent, Newspaper, RefreshCw, SearchX } from "lucide-react";
 import { getNearbyOffers } from "@/lib/api";
+import { confrontoMisto, parseOrigine } from "@/lib/priceOrigin";
 import { useAppStore } from "@/lib/store";
 import LocationBar from "@/components/ui/LocationBar";
+import AvvisoConfrontoMisto from "@/components/ui/AvvisoConfrontoMisto";
 import EmptyState from "@/components/ui/EmptyState";
 import OfferCard from "@/components/ui/OfferCard";
 import { PriceCardSkeletonList } from "@/components/ui/PriceCardSkeleton";
@@ -42,10 +44,19 @@ export default function OffersPage() {
   const notDeployed =
     isError && (error as AxiosError | undefined)?.response?.status === 404;
 
-  // Difensivo: se il backend e' vecchio e ignora source=flyer, il filtro
-  // volantino viene comunque applicato qui sulla risposta.
+  // Filtro "Solo volantino". Quando il backend dichiara l'origine si tiene
+  // quello che LUI chiama volantino (cosi' l'etichetta sulla card e il filtro
+  // omonimo non si smentiscono a vicenda); qui non si riclassifica nulla.
+  // Il confronto su `source` resta solo come difesa per un backend vecchio
+  // che ignori il parametro source=flyer: e' lo specchio del filtro server,
+  // non una classificazione di provenienza.
   const results = useMemo(
-    () => (offers ?? []).filter((o) => !flyerOnly || o.source === "flyer"),
+    () =>
+      (offers ?? []).filter((o) => {
+        if (!flyerOnly) return true;
+        const origine = parseOrigine(o.origine);
+        return origine ? origine === "volantino" : o.source === "flyer";
+      }),
     [offers, flyerOnly]
   );
 
@@ -68,6 +79,14 @@ export default function OffersPage() {
   const visible = useMemo(
     () => results.filter((o) => !chainFilter || o.chain_slug === chainFilter),
     [results, chainFilter]
+  );
+
+  // La griglia mette insieme spesa online e promo valide solo in negozio:
+  // quando convivono, l'utente deve saperlo prima di scegliere.
+  const confrontoMistoVisibile = useMemo(
+    () =>
+      confrontoMisto(visible.map((o) => parseOrigine(o.origine))),
+    [visible]
   );
 
   return (
@@ -176,6 +195,15 @@ export default function OffersPage() {
             />
           ) : (
             <>
+              {/* Senza `testo`: /offers/nearby non manda nessun avviso, quindi
+                  vale la frase generica di lib/priceOrigin, copia del fallback
+                  del backend (non nomina nessuna categoria, resta vera in ogni
+                  combinazione). Prima qui si stampava una quarta frase, scritta
+                  solo nel frontend, che elencava tre nature: su un confronto
+                  fra prezzo di scaffale e offerta da volantino nominava la
+                  spesa online, che in quel confronto non c'era. */}
+              {confrontoMistoVisibile && <AvvisoConfrontoMisto />}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {visible.map((o) => (
                   <OfferCard key={`${o.product_id}-${o.chain_slug}`} offer={o} />

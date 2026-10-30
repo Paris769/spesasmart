@@ -4,10 +4,12 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchProducts, getProductPrices, Product, PriceResult, COLD_START_HINT_MS } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG } from "@/lib/retailServices";
+import { confrontoMisto, etichettaOrigine, parseOrigine } from "@/lib/priceOrigin";
 import { useAppStore } from "@/lib/store";
 import AssistantBox from "@/components/ui/AssistantBox";
 import LocationBar from "@/components/ui/LocationBar";
 import PriceCard from "@/components/ui/PriceCard";
+import AvvisoConfrontoMisto from "@/components/ui/AvvisoConfrontoMisto";
 import ChainCoverageBanner from "@/components/ui/ChainCoverageBanner";
 import { PriceCardSkeletonList } from "@/components/ui/PriceCardSkeleton";
 import EmptyState from "@/components/ui/EmptyState";
@@ -165,6 +167,10 @@ function ProductPricePopover({ prices, loading, fallbackArea }: { prices?: Price
                 <p className={`text-[10px] ${price.in_stock === false ? "text-red-600" : "text-stone-400"}`}>
                   {price.in_stock === false ? "non disponibile" : "disponibile"}
                   {freshnessLabel(price.scraped_at) ? ` - ${freshnessLabel(price.scraped_at)}` : ""}
+                  {/* etichetta breve: la riga e' densa, la scadenza sta sulla scheda prodotto */}
+                  {etichettaOrigine(parseOrigine(price.origine))
+                    ? ` - ${etichettaOrigine(parseOrigine(price.origine))}`
+                    : ""}
                 </p>
               </div>
               <p className={`text-sm font-extrabold tnum shrink-0 ${price.in_stock === false ? "text-stone-400" : "text-primary"}`}>
@@ -198,6 +204,31 @@ function ProductResultRow({
   const bestChain = product.best_price_chain_name || product.best_price_store_name || "supermercato disponibile";
   const unavailableBest = product.best_price_in_stock === false;
   const updated = freshnessLabel(product.best_price_scraped_at);
+  // Provenienza del numero che questa colonna STAMPA, cioe' di `min_price`:
+  // si legge da min_price_origine, non da best_price_origine. Sono due righe
+  // diverse (`best` ordina per in_stock DESC, che in Postgres e' NULLS FIRST,
+  // mentre min_price filtra `in_stock IS TRUE`), e prima qui si stampava
+  // min_price con sotto l'etichetta di best_price: un'offerta da volantino
+  // valida solo in negozio e solo questa settimana poteva essere dichiarata
+  // "prezzo spesa online". Un'etichetta che non appartiene al prezzo stampato
+  // e' peggio di un'etichetta assente.
+  // La colonna e' stretta (min-w-[112px]): una riga di testo con l'etichetta
+  // breve, non un badge che la allarga. Assente = backend non ancora
+  // aggiornato, e allora non si mostra nulla.
+  //
+  // RESTANO ACCOPPIATI A `best`, e non e' richiudibile da qui: il nome catena
+  // stampato sotto il prezzo (`bestChain`, da best_price_chain_name) e il
+  // prezzo/unita (best_price_per_unit) vengono dalla LATERAL `best`, cioe'
+  // potenzialmente da un altro record. Non si possono spostare su `minrow`
+  // perche' il backend non espone ne' la catena ne' il price_per_unit DI QUELLA
+  // riga (min_price_per_unit e' il MIN del prezzo/unita su tutte le righe, che
+  // e' un terzo numero ancora). Misurato il 29/10/2026: 0 prodotti su 63.910
+  // con prezzi freschi hanno righe con in_stock IS NULL, e senza NULL le due
+  // LATERAL hanno ORDER BY equivalenti, quindi oggi i due record coincidono e
+  // la divergenza non si manifesta. Campi chiesti al backend: vedi
+  // richieste_ad_altri del giro.
+  const minOrigine = parseOrigine(product.min_price_origine);
+  const minOrigineLabel = etichettaOrigine(minOrigine);
 
   const { data: previewPrices, isFetching } = useQuery({
     queryKey: ["price-preview", product.id, effectiveLocation.lat, effectiveLocation.lng, radiusKm, searchArea],
@@ -250,6 +281,15 @@ function ProductResultRow({
               <p className="text-[10px] font-bold uppercase tracking-wide text-stone-400">Prezzo migliore</p>
               <p className="text-lg font-extrabold text-primary tnum leading-tight">{formatEur(Number(product.min_price))}</p>
               <p className="text-[11px] font-semibold text-deep truncate max-w-[130px]">{bestChain}</p>
+              {minOrigineLabel && (
+                <p
+                  className={`text-[10px] max-w-[130px] ml-auto ${
+                    minOrigine === "volantino" ? "font-semibold text-amber-700" : "text-stone-400"
+                  }`}
+                >
+                  {minOrigineLabel}
+                </p>
+              )}
               {product.best_price_per_unit != null && (
                 <p className="text-[10px] text-stone-500 tnum">{formatEur(Number(product.best_price_per_unit))}/unita</p>
               )}
@@ -275,6 +315,31 @@ function ProductResultRow({
       )}
     </li>
   );
+}
+
+// Tie-break DICHIARATO fra due righe della stessa catena allo STESSO prezzo.
+// Senza di esso vinceva "la prima arrivata": products.py ordina per
+// `in_stock DESC, price ASC` senza tie-break deterministico, quindi due utenti
+// potevano vedere nello stesso minuto la stessa card allo stesso prezzo, uno
+// con "prezzo in negozio" e l'altro con "offerta scaduta il 18/10" - letture
+// incompatibili, nessuna delle due marcata come incerta. Il caso esiste nei
+// dati (PLAID IN MICROFIBRA: 1.262 righe eurospin_web e 250 righe flyer tutte
+// a 8,99 sullo stesso prodotto e la stessa catena).
+// A parita' di prezzo si preferisce l'origine che l'utente puo' davvero
+// ottenere oggi e con meno condizioni: scaffale, poi online, poi l'offerta a
+// tempo, poi il prezzo riferito da un utente, per ultima l'offerta finita.
+const RANGO_ORIGINE: Record<string, number> = {
+  negozio: 0,
+  online: 1,
+  volantino: 2,
+  segnalato: 3,
+  scaduta: 4,
+};
+
+function rangoOrigine(price: PriceResult): number {
+  const origine = parseOrigine(price.origine);
+  // Origine non dichiarata: non puo' battere una dichiarata.
+  return origine ? RANGO_ORIGINE[origine] ?? 5 : 5;
 }
 
 function groupPricesByChain(prices?: PriceResult[]): PriceResult[] {
@@ -303,7 +368,12 @@ function groupPricesByChain(prices?: PriceResult[]): PriceResult[] {
     const chain_locations = alreadyPresent ? currentLocations : [...currentLocations, location];
     const currentScore = (current.in_stock === false ? 1_000_000 : 0) + current.price;
     const nextScore = (price.in_stock === false ? 1_000_000 : 0) + price.price;
-    const best = nextScore < currentScore ? price : current;
+    const best =
+      nextScore < currentScore
+        ? price
+        : nextScore === currentScore && rangoOrigine(price) < rangoOrigine(current)
+        ? price
+        : current;
 
     groups.set(key, {
       ...best,
@@ -576,6 +646,21 @@ export default function HomePage() {
             const best = groupedPrices[0];
             const worst = groupedPrices[groupedPrices.length - 1];
             const maxSave = worst.price - best.price;
+            // Il confronto mescola spesa online e prezzi di negozio/volantino?
+            // Solo con origini davvero dichiarate: un backend vecchio non deve
+            // far comparire l'avviso a caso.
+            const misto = confrontoMisto(groupedPrices.map((p) => parseOrigine(p.origine)));
+            // Il delta "fino a EUR X in meno" tra prezzi di natura diversa va
+            // QUALIFICATO, non cancellato. Prima questa condizione SOSTITUIVA
+            // il numero con la frase "confronto tra prezzi di natura diversa":
+            // sparivano insieme la cifra principale dell'hero e la proposta di
+            // valore dell'app, e l'utente restava con una frase che (quando
+            // l'avviso non scattava) nessun testo sotto gli spiegava. Ora il
+            // numero resta e accanto compare il caveat.
+            const origineBest = parseOrigine(best.origine);
+            const origineWorst = parseOrigine(worst.origine);
+            const naturaDiversa =
+              origineBest !== null && origineWorst !== null && origineBest !== origineWorst;
             return (
               <>
                 {groupedPrices.length > 1 && maxSave > 0.01 && (
@@ -585,14 +670,39 @@ export default function HomePage() {
                       <p className="text-[12px] font-medium text-white/80">
                         Miglior prezzo da {best.chain_name}
                       </p>
+                      {/* L'etichetta si mostra solo se l'origine e' davvero
+                          dichiarata: con "sconosciuta" il backend manda
+                          origine_label = "provenienza non dichiarata", cioe'
+                          la stringa che in UI non va mai scritta accanto a un
+                          prezzo. Stamparla grezza era il caso del prezzo
+                          segnalato dallo scanner, che arriva piu' basso di
+                          tutti e finisce proprio qui, nell'hero. */}
+                      {origineBest && best.origine_label && (
+                        <p className="text-[11px] text-white/75">{best.origine_label}</p>
+                      )}
                       <p className="text-price-xl tnum mt-0.5">EUR {best.price.toFixed(2)}</p>
                       <p className="text-[13px] text-white/90 mt-0.5">
                         fino a <strong className="tnum">EUR {maxSave.toFixed(2)}</strong> in meno
                         rispetto al piu caro
                       </p>
+                      {naturaDiversa && (
+                        <p className="text-[11px] text-white/75 mt-0.5">
+                          confronto tra prezzi di natura diversa
+                          {misto ? ": leggi l'avviso qui sotto" : ""}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
+
+                {/* Senza `testo`: vale la frase generica di lib/priceOrigin,
+                    che e' copia del fallback del backend e non nomina nessuna
+                    categoria. Il campo `avviso` della risposta lo calcola il
+                    backend su TUTTE le righe (fino a 30), mentre qui si mostra
+                    una riga per catena: quel testo potrebbe nominare una
+                    natura di prezzo che in questo confronto non si vede.
+                    Vedi PriceResult.avviso in lib/api.ts. */}
+                {misto && <AvvisoConfrontoMisto />}
 
                 <p className="text-sm text-stone-500">
                   <strong className="text-deep">{groupedPrices.length}</strong> catene - {prices?.length ?? 0} sedi/prezzi - spesa online e

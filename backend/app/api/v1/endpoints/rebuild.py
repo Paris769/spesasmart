@@ -24,10 +24,12 @@ Risposta:
     {
       "items": [{
         "query_name": str,
-        "original": {"product_id", "name", "brand", "price"},
+        "original": {"product_id", "name", "brand", "price",
+                     "origine", "origine_label", "sconto_affermabile"},
         "chosen":   {"product_id", "name", "brand", "image_url", "price",
                      "original_price", "discount_pct", "price_per_unit",
-                     "promo_label", "promo_expires", "chain_slug",
+                     "promo_label", "promo_expires", "origine",
+                     "origine_label", "sconto_affermabile", "chain_slug",
                      "chain_name", "store_id", "store_name",
                      "distance_km"} | null,
         "match_kind": "same_product_on_offer" | "same_brand_on_offer"
@@ -42,11 +44,34 @@ Risposta:
       "summary": {"items_total", "on_offer_count", "brand_kept_count",
                   "brand_changed_count", "not_found_count",
                   "total_estimated", "total_without_offers",
-                  "estimated_saving"}
+                  "estimated_saving", "avviso"}
     }
 
 `distance_km` e' null per gli store online nazionali e per i volantini: non
 hanno una distanza (vedi core/geo_coverage).
+
+`origine` dichiara da dove viene il prezzo ("online", "negozio", "volantino",
+"scaduta", "segnalato", "sconosciuta") e `origine_label` e' il testo pronto da
+mostrare, con la scadenza quando l'offerta e' ancora in corso (vedi
+core/price_origin). `sconto_affermabile` risponde a una domanda DIVERSA: se
+su quella riga si puo' affermare un risparmio, cioe' se mostrare il prezzo
+barrato, la percentuale di sconto e qualunque frase di risparmio. E' true
+quando la riga non e' dimostrabilmente scaduta E porta una prova di sconto
+(barrato piu' alto del prezzo, o una sorgente che per natura E' un volantino),
+quindi anche su uno sconto di catalogo senza scadenza — la' l'etichetta dice
+che il termine non e' indicato, e non inventa una data. E' false su una riga
+con la scadenza GIA' PASSATA, che e' il caso in cui il piano prometteva un
+prezzo non piu' ottenibile. Il campo si chiamava `promozione_viva` fino al
+giro scorso, quando fondeva le due domande in una.
+`promo_verdict` e' null anche quando lo sconto non e' affermabile: un verdetto
+certifica uno sconto, e dove non c'e' niente da certificare non si pubblica un
+valore speciale (prima era "promo_non_viva", che nessuna riga produceva).
+Nelle voci "not_found" `original` ha comunque le chiavi
+`origine`, `origine_label` e `sconto_affermabile`, valorizzate a null: senza
+prezzo non c'e' provenienza, ma il contratto resta quello dichiarato qui.
+`summary.avviso` e' valorizzato solo quando il totale somma prezzi online e
+prezzi di negozio/volantino, cioe' quando non e' un importo pagabile in una
+volta sola; e' null altrimenti.
 
 Cache-Control: no-store. La risposta dipende dalla spesa passata dell'utente e
 dalla sua posizione: non va messa in nessuna cache condivisa.

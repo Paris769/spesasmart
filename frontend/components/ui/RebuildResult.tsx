@@ -5,12 +5,22 @@ import {
   ArrowRight,
   BadgePercent,
   CheckCircle2,
+  CreditCard,
+  Info,
   MapPin,
   PackageOpen,
   ShoppingBasket,
   Tag,
 } from "lucide-react";
 import { RebuildItem, RebuildResultData, RebuildSummary } from "@/lib/api";
+import {
+  NOTA_SENZA_TERMINE_BREVE,
+  condizioneDichiarata,
+  etichettaOrigine,
+  parseOrigine,
+  scontoAffermabile,
+  separaNotaSenzaTermine,
+} from "@/lib/priceOrigin";
 
 /**
  * Rendering delle sostituzioni di "rifai la spesa con le offerte".
@@ -44,11 +54,23 @@ function plural(count: number | null | undefined, one: string, many: string): st
   return count === 1 ? one : many;
 }
 
+/** Sconto affermabile sulla voce scelta: la stessa condizione di PriceCard e
+ *  OfferCard, dichiarata dal backend e non ricalcolata qui, perche' su questa
+ *  superficie il risparmio si SOMMA e finisce nell'intestazione.
+ *  Vedi scontoAffermabile() in lib/priceOrigin. */
+function scontoItem(item: RebuildItem): boolean {
+  return scontoAffermabile(item.chosen);
+}
+
 function isOnOffer(item: RebuildItem): boolean {
   const kind = item.match_kind || "";
   if (typeof kind === "string" && kind.endsWith("_on_offer")) return true;
+  // discount_pct nasce dal prezzo barrato, che da solo non prova niente: un
+  // barrato con una scadenza GIA' PASSATA non e' uno sconto ottenibile. Come
+  // ripiego (quando il backend non dichiara match_kind) conta solo se il
+  // backend dichiara lo sconto affermabile su quella riga.
   const discount = num(item.chosen?.discount_pct);
-  return discount !== null && discount > 0;
+  return discount !== null && discount > 0 && scontoItem(item);
 }
 
 function hasChoice(item: RebuildItem): boolean {
@@ -74,8 +96,14 @@ function matchLabel(kind?: string | null): string {
 function buildSummary(items: RebuildItem[], given?: RebuildSummary | null): RebuildSummary {
   const chosenPrices = items.map((it) => num(it.chosen?.price)).filter((p): p is number => p !== null);
   const totalEstimated = chosenPrices.reduce((acc, p) => acc + p, 0);
+  // "senza offerte" e' il totale a prezzo pieno, e il prezzo barrato puo'
+  // entrarci solo dove il backend dichiara lo sconto affermabile: altrimenti
+  // questo ripiego gonfia il "risparmi EUR X" dell'intestazione con barrati di
+  // promozioni finite. Senza sconto affermabile il prezzo pieno E' il prezzo
+  // scelto, e il risparmio sommato resta zero.
   const totalWithoutOffers = items.reduce((acc, it) => {
-    const full = num(it.chosen?.original_price) ?? num(it.chosen?.price) ?? num(it.original?.price);
+    const barrato = scontoItem(it) ? num(it.chosen?.original_price) : null;
+    const full = barrato ?? num(it.chosen?.price) ?? num(it.original?.price);
     return acc + (full ?? 0);
   }, 0);
 
@@ -98,6 +126,10 @@ function buildSummary(items: RebuildItem[], given?: RebuildSummary | null): Rebu
       (totalWithoutOffers > totalEstimated && chosenPrices.length
         ? totalWithoutOffers - totalEstimated
         : null),
+    // L'avviso NON si ricalcola: lo decide il backend sulle voci scelte. Va
+    // ricopiato esplicitamente, altrimenti si perde proprio qui, nel punto
+    // che rifa' i totali lato client.
+    avviso: given?.avviso ?? null,
   };
 }
 
@@ -123,6 +155,18 @@ function Badge({
     </span>
   );
 }
+
+/** Tono del Badge locale per ciascuna provenienza. Ambra = cautela (offerta a
+ *  tempo, prezzo riferito da un utente), rosso = offerta finita, neutro = il
+ *  prezzo normale della catena. Il colore non porta mai l'informazione da
+ *  solo: il testo dell'etichetta c'e' sempre. */
+const TONO_ORIGINE: Record<string, "amber" | "red" | "neutral"> = {
+  volantino: "amber",
+  segnalato: "amber",
+  scaduta: "red",
+  negozio: "neutral",
+  online: "neutral",
+};
 
 function SummaryHeader({ summary }: { summary: RebuildSummary }) {
   const saving = num(summary.estimated_saving);
@@ -169,6 +213,16 @@ function SummaryHeader({ summary }: { summary: RebuildSummary }) {
             </li>
           )}
         </ul>
+        {/* Il totale e il risparmio qui sopra sono una somma di voci che
+            possono avere natura diversa: quei soldi si risparmiano solo
+            andando in quei negozi entro la scadenza. Lo dichiara il backend
+            sulle voci scelte, qui si rende. */}
+        {summary.avviso && (
+          <p className="flex gap-1.5 rounded-xl border border-white/30 bg-white/14 px-2.5 py-1.5 text-[11px] text-white/90">
+            <Info size={13} className="mt-0.5 shrink-0" />
+            <span>{summary.avviso}</span>
+          </p>
+        )}
       </div>
     </div>
   );
@@ -184,6 +238,53 @@ function ItemRow({ item, originalLabel }: { item: RebuildItem; originalLabel: st
   const fakePromo = item.promo_verdict === "fake_promo";
   const brandFrom = (original.brand || "").trim();
   const brandTo = (chosen?.brand || "").trim();
+
+  // Provenienza delle due colonne: `saving_vs_original` e' la differenza fra
+  // questi due prezzi, e se le nature non coincidono non e' un risparmio
+  // confrontabile. Il backend le dichiara, qui si rendono.
+  const origineChosen = parseOrigine(chosen?.origine);
+  const origineOriginal = parseOrigine(original.origine);
+  // Caso 3: la nota ("termine non indicato") arriva nella coda di
+  // origine_label e qui si separa, cosi' il Badge porta la provenienza e il
+  // badge breve porta la nota, una volta sola. Prima il Badge stampava
+  // labelChosen per intero, nota compresa, col badge breve accanto: la stessa
+  // informazione due volte sulla stessa riga, e qui senza nemmeno il
+  // troncamento del pill che altrove la giustificava.
+  const { label: labelSeparata, senzaTermine } = separaNotaSenzaTermine(
+    chosen?.origine_label
+  );
+  const labelChosen = labelSeparata || etichettaOrigine(origineChosen);
+  // Lo sconto lo dichiara il backend, riga per riga: barrato, "-X%" e pill del
+  // promo_label. Stessa regola di PriceCard e OfferCard (scontoAffermabile()
+  // in lib/priceOrigin), perche' "rifai la spesa con le offerte" e' la
+  // superficie che PROPONE di cambiare prodotto per risparmiare: qui il
+  // barrato di una promozione finita fa cambiare un acquisto per niente.
+  // Prima la condizione era `origine === "volantino"`, cioe' la provenienza
+  // scambiata per prova di sconto: sopprimeva anche gli sconti di catalogo
+  // senza scadenza, che sulle righe fresche sono il caso normale.
+  const affermabile = scontoAffermabile(chosen);
+  const barrato = affermabile ? num(chosen?.original_price) : null;
+  const prezzoScelto = num(chosen?.price);
+  const mostraBarrato =
+    barrato !== null && (prezzoScelto === null || barrato > prezzoScelto);
+  // Il prezzo di un'offerta finita non si ottiene piu': il risparmio rispetto
+  // alla voce precedente sarebbe un conto su un numero che non si puo' pagare.
+  const risparmioAffermabile = origineChosen !== "scaduta";
+  const condizione = condizioneDichiarata(chosen?.origine_label);
+  // Quando l'etichetta di origine porta gia' la data (volantino in corso,
+  // offerta scaduta) il badge "fino al ..." sparisce: la stessa data due
+  // volte sulla stessa riga si legge come un errore.
+  const dataNellaLabel =
+    Boolean(chosen?.origine_label) &&
+    (origineChosen === "volantino" || origineChosen === "scaduta");
+  // "fino al GG/MM/AAAA" e' un termine ANCORA VALIDO: si dice solo dove lo
+  // sconto e' affermabile e la categoria e' "volantino". Senza questa
+  // condizione il badge stampava `chosen.promo_expires` cosi' com'era: su una
+  // riga di listino con promo_expires passata la categoria e' "negozio" (non
+  // "scaduta"), quindi dataNellaLabel era false e la riga diceva "fino al
+  // 23/08/2026" su una data passata. Nel campione del 30/10/2026 eurospin_web
+  // ha 16 righe con scadenza passata su 1.046 campionate.
+  const termineDichiarato = affermabile && origineChosen === "volantino";
 
   return (
     <li className="px-3 py-3 sm:px-4">
@@ -208,6 +309,11 @@ function ItemRow({ item, originalLabel }: { item: RebuildItem; originalLabel: st
               {brandFrom || "marca non indicata"}
               {eur(original.price) ? ` - ${eur(original.price)}` : ""}
             </p>
+            {origineOriginal && eur(original.price) && (
+              <p className="text-[10px] text-stone-400">
+                {etichettaOrigine(origineOriginal)}
+              </p>
+            )}
           </div>
 
           <ArrowRight
@@ -254,9 +360,9 @@ function ItemRow({ item, originalLabel }: { item: RebuildItem; originalLabel: st
                 </div>
                 <div className="shrink-0 text-right">
                   <p className="tnum text-sm font-extrabold text-primary">{eur(chosen.price)}</p>
-                  {eur(chosen.original_price) && (
+                  {mostraBarrato && (
                     <p className="tnum text-[10px] text-stone-400 line-through">
-                      {eur(chosen.original_price)}
+                      {eur(barrato)}
                     </p>
                   )}
                   {num(chosen.price_per_unit) !== null && (
@@ -291,20 +397,38 @@ function ItemRow({ item, originalLabel }: { item: RebuildItem; originalLabel: st
               <Tag size={10} /> marca cambiata: {brandFrom || "n.d."} -&gt; {brandTo || "n.d."}
             </Badge>
           )}
-          {discount !== null && discount > 0 && (
+          {affermabile && discount !== null && discount > 0 && (
             <Badge tone="accent">
               <BadgePercent size={10} /> -{Math.round(discount)}%
             </Badge>
           )}
-          {saving !== null && saving > 0.009 && (
+          {risparmioAffermabile && saving !== null && saving > 0.009 && (
             <Badge tone="green">risparmi {eur(saving)}</Badge>
           )}
           {saving !== null && saving < -0.009 && (
             <Badge tone="neutral">costa {eur(Math.abs(saving))} in piu&apos;</Badge>
           )}
-          {chosen?.promo_label && <Badge tone="neutral">{chosen.promo_label}</Badge>}
-          {chosen?.promo_expires && (
+          {origineChosen && labelChosen && (
+            <Badge tone={TONO_ORIGINE[origineChosen]}>
+              {origineChosen === "scaduta" && <AlertTriangle size={10} />}
+              {labelChosen}
+            </Badge>
+          )}
+          {affermabile && chosen?.promo_label && (
+            <Badge tone="neutral">{chosen.promo_label}</Badge>
+          )}
+          {condizione && (
+            <Badge tone="amber">
+              <CreditCard size={10} /> vale solo {condizione}
+            </Badge>
+          )}
+          {chosen?.promo_expires && termineDichiarato && !dataNellaLabel && (
             <Badge tone="neutral">fino al {formatDay(chosen.promo_expires)}</Badge>
+          )}
+          {/* Caso 3: lo sconto si mostra, il termine non c'e'. Badge neutro,
+              non accent: non e' un richiamo, e' la cosa che non sappiamo. */}
+          {senzaTermine && (
+            <Badge tone="neutral">{NOTA_SENZA_TERMINE_BREVE}</Badge>
           )}
           {fakePromo && (
             <Badge tone="red">

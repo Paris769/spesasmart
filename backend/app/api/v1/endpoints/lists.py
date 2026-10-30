@@ -10,10 +10,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.freshness import fresh_price_sql
 from app.db.session import get_db
 from app.core.geo_coverage import unavailable_online_chains
+from app.core.price_origin import (
+    avviso as avviso_origini,
+    descrizione_di,
+    origine_di,
+)
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
 MIN_VALID_PRICE = 0.10
+
+
+def _origine_riga(r) -> tuple[str, str]:
+    """
+    Origine e etichetta di una singola riga prezzo.
+
+    Sta qui perche' la decisione si prende per RIGA e non per sola sorgente:
+    original_price e promo_expires sono la prova che una riga di catena
+    discount e' davvero un'offerta. origine_di/descrizione_di leggono la riga
+    con .get(), quindi la funzione sopravvive a una query che non selezioni
+    uno dei campi invece di esplodere con KeyError.
+    """
+    return origine_di(r), descrizione_di(r)
 
 
 def _strip_accents(value: str) -> str:
@@ -284,7 +302,13 @@ _QUICK_ITEM_SQL = text(f"""
         p.id::text          AS product_id,
         p.name              AS product_name,
         p.image_url         AS image_url,
-        pr.in_stock         AS in_stock
+        pr.in_stock         AS in_stock,
+        pr.source           AS source,
+        pr.promo_expires    AS promo_expires,
+        -- prova che la riga e' davvero un'offerta e non il prezzo di
+        -- scaffale: serve a price_origin per decidere l'origine per RIGA
+        pr.original_price   AS original_price,
+        NULLIF(TRIM(pr.promo_label), '') AS promo_label
     FROM candidates p
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
@@ -292,6 +316,18 @@ _QUICK_ITEM_SQL = text(f"""
     WHERE pr.price >= :min_valid_price
       AND NOT pr.quarantined
       AND {_FRESH_SQL}
+      -- Una promo SCADUTA non entra nel piano carrello. La selezione e'
+      -- `ORDER BY pr.price ASC`, quindi la riga piu' economica vince: senza
+      -- questo filtro un'offerta finita ma ancora is_current e fresca veniva
+      -- scelta, sommata nel totale e nel risparmio dichiarato, e poi la
+      -- pagina le stampava accanto il badge rosso "offerta scaduta". Stesso
+      -- filtro di offers.py e offers_rebuild.py, sullo stesso calendario
+      -- civile italiano che usa price_origin (CURRENT_DATE sarebbe il fuso
+      -- della sessione Postgres, UTC su Supabase).
+      AND (
+            pr.promo_expires IS NULL
+            OR pr.promo_expires >= (now() AT TIME ZONE 'Europe/Rome')::date
+          )
       AND (
             (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
             OR ST_DWithin(
@@ -332,7 +368,11 @@ _QUICK_ITEM_BY_ID_SQL = text(f"""
         p.id::text          AS product_id,
         p.name              AS product_name,
         p.image_url         AS image_url,
-        pr.in_stock         AS in_stock
+        pr.in_stock         AS in_stock,
+        pr.source           AS source,
+        pr.promo_expires    AS promo_expires,
+        pr.original_price   AS original_price,
+        NULLIF(TRIM(pr.promo_label), '') AS promo_label
     FROM products p
     JOIN prices pr ON pr.product_id = p.id AND pr.is_current = TRUE
     JOIN stores s  ON pr.store_id = s.id   AND s.is_active = TRUE
@@ -341,6 +381,11 @@ _QUICK_ITEM_BY_ID_SQL = text(f"""
       AND NOT pr.quarantined
       AND {_FRESH_SQL}
       AND p.id = :pid
+      -- Come in _QUICK_ITEM_SQL: le promo scadute non entrano nel piano.
+      AND (
+            pr.promo_expires IS NULL
+            OR pr.promo_expires >= (now() AT TIME ZONE 'Europe/Rome')::date
+          )
       AND (
             (s.external_id LIKE '%-online' AND NOT (c.slug = ANY(string_to_array(:no_online, ','))))
             OR ST_DWithin(
@@ -441,8 +486,14 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
             stock_pen = 0 if in_stock else 1
             return (stock_pen, float(r["price"])) if prefer_stock else (float(r["price"]),)
         best_row = min(rows, key=_rank)
+        # _rank ordina per prezzo puro: il volantino batte sempre il listino,
+        # quindi lo split multi-negozio e' sistematicamente popolato da prezzi
+        # volantino. Senza etichetta sembra invece il prezzo di scaffale.
+        best_orig, best_orig_label = _origine_riga(best_row)
         per_item_best.append({
             "query": q, "quantity": qty,
+            "origine": best_orig,
+            "origine_label": best_orig_label,
             "price": float(best_row["price"]),
             "price_per_unit": float(best_row["price_per_unit"]) if best_row["price_per_unit"] is not None else None,
             "subtotal": round(float(best_row["price"]) * qty, 2),
@@ -476,12 +527,20 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "total": 0.0,
                 "covered": 0,
                 "items": [],
+                # Chiave di servizio: il TOTALE del negozio e' la somma di
+                # prezzi di origine diversa, e va dichiarato a livello di
+                # negozio, non solo di riga. Chiusa in "avviso" piu' sotto.
+                "_origini": set(),
             })
+            orig, orig_label = _origine_riga(r)
             sub = round(float(r["price"]) * qty, 2)
             st["total"] = round(st["total"] + sub, 2)
             st["covered"] += 1
+            st["_origini"].add(orig)
             st["items"].append({
                 "query": q, "quantity": qty,
+                "origine": orig,
+                "origine_label": orig_label,
                 "price": float(r["price"]), "subtotal": sub,
                 "price_per_unit": float(r["price_per_unit"]) if r["price_per_unit"] is not None else None,
                 "product_name": r["product_name"],
@@ -492,6 +551,11 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
                 "matched_product_id": r["product_id"],
                 "matched_product_name": r["product_name"],
             })
+
+    # `_origini` e' un set di servizio e non e' serializzabile in JSON: si
+    # chiude qui, trasformato nell'avviso del singolo negozio.
+    for s in stores.values():
+        s["avviso"] = avviso_origini(list(s.pop("_origini")))
 
     n_items = len(items)
     n_findable = sum(1 for b in per_item_best if b is not None)
@@ -526,6 +590,9 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
         multi_total = round(multi_total + b["subtotal"], 2)
         ms["items"].append(b)
 
+    for ms in multi_by_store.values():
+        ms["avviso"] = avviso_origini([i["origine"] for i in ms["items"]])
+
     # Risparmio: confronto solo se il singolo migliore copre tutte le voci trovabili.
     savings = 0.0
     if best_single and best_single["covered"] == n_findable and n_findable > 0:
@@ -541,12 +608,28 @@ async def optimize_quick(body: QuickOptimizeRequest, db: AsyncSession = Depends(
     # "multi" (prezzo più basso / disponibilità, che sfruttano lo split).
     recommended = "single" if strategy == "fewest_stores" else "multi"
 
+    # L'avviso top-level annota UN confronto preciso: best_single contro il
+    # piano multi-negozio (e' da quei due totali che nasce savings_vs_single).
+    # Prima era calcolato sulle origini di TUTTE le righe candidate di TUTTI i
+    # negozi: un insieme che contiene sempre sia online sia negozio, quindi
+    # l'avviso scattava anche quando i due totali confrontati erano entrambi
+    # online e perfettamente confrontabili.
+    origini_confronto: list[str] = []
+    if best_single:
+        origini_confronto += [i["origine"] for i in best_single["items"]]
+    origini_confronto += [b["origine"] for b in per_item_best if b]
+
     return {
         "n_items": n_items,
         "n_findable": n_findable,
         "strategy": strategy,
         "recommended_plan": recommended,
         "in_stock_count": in_stock_count,
+        # savings_vs_single e' una differenza fra due totali di natura diversa
+        # presentata come risparmio: un totale e-commerce contro un totale
+        # costruito con offerte volantino. Se le origini si mescolano va detto
+        # qui, accanto al numero, non solo riga per riga.
+        "avviso": avviso_origini(origini_confronto),
         "best_single": best_single,
         # Tutte le catene disponibili (sono una decina): il confronto completo e'
         # piu' utile, e soprattutto non taglia fuori catene che coprono poche
@@ -570,6 +653,12 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
     3. Calcola la soluzione a singolo negozio (totale piÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¹ basso)
     4. Calcola la soluzione multi-negozio (max_stores) se conviene
     5. Restituisce entrambe le opzioni con i totali
+
+    Ogni voce porta `origine` e `origine_label` (core/price_origin) e ogni
+    piano porta `avviso`, valorizzato solo quando i prezzi confrontati sono di
+    natura diversa: i totali di questo endpoint vengono persistiti in
+    shopping_lists.optimization_result e riletti dal digest settimanale, quindi
+    un numero senza provenienza sopravvive alla richiesta che l'ha prodotto.
     """
     items_res = await db.execute(
         text("SELECT * FROM list_items WHERE list_id = :lid AND product_id IS NOT NULL"),
@@ -602,6 +691,12 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
         text(f"""
             SELECT
                 p.product_id::text, p.price, p.price_per_unit,
+                -- Provenienza per RIGA, come in optimize-quick: senza questi
+                -- campi single_store.total e savings_vs_single (che vengono
+                -- anche PERSISTITI in shopping_lists.optimization_result)
+                -- sommano prezzi di natura diversa senza dirlo.
+                p.source, p.promo_expires, p.original_price,
+                NULLIF(TRIM(p.promo_label), '') AS promo_label,
                 s.id::text AS store_id, s.name AS store_name,
                 c.name AS chain_name, c.slug AS chain_slug,
                 c.shop_url, s.has_delivery, s.has_click_collect,
@@ -618,6 +713,12 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
               AND p.price >= :min_valid_price
               AND {fresh_opt}
               AND s.is_active  = TRUE
+              -- Come in _QUICK_ITEM_SQL: una promo scaduta non puo' vincere
+              -- il piano solo perche' e' il prezzo piu' basso rimasto in DB.
+              AND (
+                    p.promo_expires IS NULL
+                    OR p.promo_expires >= (now() AT TIME ZONE 'Europe/Rome')::date
+                  )
               AND ST_DWithin(
                     s.coordinates::geography,
                     ST_Point(:lng, :lat)::geography,
@@ -659,6 +760,7 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
             # aggiunge solo se non ancora assegnato per questo prodotto
             already = next((x for x in entry["items"] if x["product_id"] == pid), None)
             if not already:
+                orig, orig_label = _origine_riga(row)
                 entry["total"] += float(row["price"]) * qty
                 entry["covered_products"] += 1
                 entry["items"].append({
@@ -667,6 +769,8 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
                     "price_per_unit": float(row["price_per_unit"]) if row["price_per_unit"] is not None else None,
                     "quantity": qty,
                     "subtotal": float(row["price"]) * qty,
+                    "origine": orig,
+                    "origine_label": orig_label,
                     # gli item di /optimize hanno sempre un product_id reale
                     "match_type": "exact",
                 })
@@ -701,6 +805,7 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
             "items": [],
         })
         subtotal = float(row["price"]) * qty
+        orig, orig_label = _origine_riga(row)
         multi_total += subtotal
         multi_store_assignment[sid]["subtotal"] += subtotal
         multi_store_assignment[sid]["items"].append({
@@ -709,8 +814,29 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
             "price_per_unit": float(row["price_per_unit"]) if row["price_per_unit"] is not None else None,
             "quantity": qty,
             "subtotal": subtotal,
+            "origine": orig,
+            "origine_label": orig_label,
             "match_type": "exact",
         })
+
+    # L'avviso annota IL confronto che l'endpoint pubblica: single_store contro
+    # il piano multi-negozio, perche' e' da quei due totali che nasce
+    # savings_vs_single. Calcolato sulle sole righe di quei due piani, non su
+    # tutte le righe candidate: un avviso attaccato a tutto non si legge piu'.
+    origini_confronto: list[str] = []
+    if best_single:
+        origini_single = [
+            i["origine"] for i in best_single["items"] if i.get("origine")
+        ]
+        best_single["avviso"] = avviso_origini(origini_single)
+        origini_confronto += origini_single
+    for ms in multi_store_assignment.values():
+        ms["avviso"] = avviso_origini(
+            [i["origine"] for i in ms["items"] if i.get("origine")]
+        )
+        origini_confronto += [
+            i["origine"] for i in ms["items"] if i.get("origine")
+        ]
 
     result = {
         "single_store": best_single,
@@ -721,6 +847,7 @@ async def optimize_list(list_id: str, body: OptimizeRequest, db: AsyncSession = 
                 (best_single["total"] - multi_total) if best_single else 0, 2
             ),
         },
+        "avviso": avviso_origini(origini_confronto),
         "products_without_prices": [
             pid for pid in product_ids if pid not in by_product
         ],

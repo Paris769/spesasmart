@@ -72,6 +72,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.freshness import fresh_price_sql
 from app.core.geo_coverage import unavailable_online_chains
+from app.core.price_origin import (
+    avviso as avviso_origini,
+    descrizione_di,
+    sconto_affermabile_sql,
+    origine_di,
+    sconto_affermabile_di,
+)
 from app.services import promo as promo_service
 
 # ── Costanti di serving ─────────────────────────────────────────────────────
@@ -609,14 +616,24 @@ def _prices_sql(params: dict) -> Any:
     la join serve solo ad attaccare lo slug della catena, che e' cio' di cui ha
     bisogno fresh_price_sql per la soglia di freschezza.
 
-    Il predicato di offerta e' scritto VERBATIM come quello dell'indice
-    parziale idx_prices_current_promo_covering
-    (is_current AND (original_price > price OR promo_label IS NOT NULL
-    OR source = 'flyer')), cosi' resta utilizzabile quando il planner preferisce
-    partire dai negozi; la variante piu' stretta con NULLIF(TRIM(...)) scarta le
-    etichette vuote (carrefour_web ne ha migliaia) ed e' valutata a parte.
+    `is_offer` non ha un predicato suo: e' sconto_affermabile_sql, cioe' le
+    stesse righe su cui price_origin.sconto_affermabile() dice True. La
+    condizione che conta per estimated_saving e' l'esclusione delle promozioni
+    SCADUTE: una riga col barrato e la scadenza passata entrava nel risparmio
+    dichiarato e il piano prometteva un prezzo che in cassa non c'e' piu'.
+    Il giro precedente chiedeva in piu' la categoria "volantino", cioe' fondeva
+    provenienza e sconto: cosi' escludeva anche gli sconti dichiarati dalla
+    catena senza scadenza, e il piano smetteva di trovare offerte in quasi
+    tutta Italia. promo_label non e' mai stato una prova (in produzione
+    carrefour_web scrive la stringa vuota, conad_web il nome del suo programma
+    di prezzi PERMANENTI, aldi/lidl un'etichetta generica su tutto il
+    catalogo, md i nomi delle pagine del volantino).
+    Il predicato e' quindi piu' stretto di quello dell'indice parziale
+    idx_prices_current_promo_covering (che include ancora promo_label): resta
+    comunque utilizzabile dal planner, perche' lo implica.
     """
     fresh = fresh_price_sql(params, price_alias="p", chain_alias="st")
+    affermabile = sconto_affermabile_sql(params, price_alias="p")
     return text(f"""
         WITH scope AS (
             SELECT * FROM unnest(
@@ -633,15 +650,7 @@ def _prices_sql(params: dict) -> Any:
                p.price_per_unit,
                p.source,
                p.in_stock,
-               (
-                     (p.original_price > p.price
-                      OR p.promo_label IS NOT NULL
-                      OR p.source = 'flyer')
-                 AND (p.original_price > p.price
-                      OR NULLIF(TRIM(p.promo_label), '') IS NOT NULL
-                      OR p.source = 'flyer')
-                 AND (p.promo_expires IS NULL OR p.promo_expires >= CURRENT_DATE)
-               ) AS is_offer
+               {affermabile} AS is_offer
         FROM prices p
         JOIN scope st ON st.store_id = p.store_id
         WHERE p.product_id = ANY(CAST(:pids AS uuid[]))
@@ -694,6 +703,31 @@ def _discount_pct(price: Optional[float], original: Optional[float]) -> Optional
     if price is None or original is None or original <= price or original <= 0:
         return None
     return int(round((original - price) / original * 100))
+
+
+def _origine_riga(
+    row: Optional[dict],
+) -> tuple[Optional[str], Optional[str], Optional[bool]]:
+    """
+    Origine, etichetta e sconto affermabile di una riga prezzo, oppure
+    (None, None, None) se la riga non c'e'.
+
+    La decisione si prende per RIGA, e la riga la leggono origine_di /
+    descrizione_di / sconto_affermabile_di: elencare i campi a mano, come si
+    faceva qui, lasciava fuori `price` e teneva la prova del barrato larga
+    (original_price > 0) invece di quella stretta (> price).
+
+    Sono DUE domande diverse e vanno entrambe nella risposta: `origine` dice
+    che tipo di prezzo e' quello (il piano somma prezzi online e prezzi di
+    negozio, e il totale non e' pagabile in una volta sola), mentre
+    `sconto_affermabile` e' il permesso di mostrare il barrato e la
+    percentuale, che RebuildResult rende. Su una riga di listino con la
+    scadenza GIA' PASSATA e' False, ed e' la' che il piano prometteva un
+    risparmio che in cassa non c'e'.
+    """
+    if not row:
+        return None, None, None
+    return origine_di(row), descrizione_di(row), sconto_affermabile_di(row)
 
 
 # ── Pipeline ────────────────────────────────────────────────────────────────
@@ -1032,6 +1066,15 @@ async def rebuild_with_offers(
                     "name": query_name,
                     "brand": item.get("brand"),
                     "price": None,
+                    # Il contratto dichiarato in rebuild.py promette origine e
+                    # origine_label in OGNI `original`: senza prezzo non c'e'
+                    # provenienza, ma le chiavi ci sono comunque, altrimenti un
+                    # consumatore scritto sul contratto prende KeyError proprio
+                    # sulle voci not_found, cioe' il caso che il contratto dice
+                    # di gestire.
+                    "origine": None,
+                    "origine_label": None,
+                    "sconto_affermabile": None,
                 },
                 "chosen": None,
                 "match_kind": "not_found",
@@ -1110,6 +1153,10 @@ async def rebuild_with_offers(
                         "name": original_row["name"],
                         "brand": original_row["brand"],
                         "price": None,
+                        # come sopra: chiavi presenti anche senza prezzo
+                        "origine": None,
+                        "origine_label": None,
+                        "sconto_affermabile": None,
                     },
                     "chosen": None,
                     "match_kind": "not_found",
@@ -1145,6 +1192,11 @@ async def rebuild_with_offers(
         saving = (round(original_price - chosen_row["price"], 2)
                   if original_price is not None else None)
 
+        chosen_origine, chosen_origine_label, chosen_affermabile = _origine_riga(chosen_row)
+        original_origine, original_origine_label, original_affermabile = _origine_riga(
+            original_best
+        )
+
         chosen_out = {
             "product_id": chosen_row["product_id"],
             "name": chosen_product["name"],
@@ -1157,6 +1209,16 @@ async def rebuild_with_offers(
             "price_per_unit": _fnum(chosen_row.get("price_per_unit")),
             "promo_label": chosen_row.get("promo_label"),
             "promo_expires": chosen_row.get("promo_expires"),
+            # chosen_out e' una whitelist scritta a mano: `source` c'e' nella
+            # riga (arriva da _prices_sql via **row) ma si fermerebbe qui, e il
+            # frontend mostrerebbe il prezzo senza sapere da dove viene.
+            "origine": chosen_origine,
+            "origine_label": chosen_origine_label,
+            # Il barrato e la percentuale qui sopra si mostrano solo dove lo
+            # sconto e' affermabile (vedi _origine_riga). E' una domanda
+            # diversa da `origine`: una riga del catalogo online puo' portare
+            # uno sconto dichiarato dalla catena.
+            "sconto_affermabile": chosen_affermabile,
             "chain_slug": chosen_row["chain_slug"],
             "chain_name": chosen_row["chain_name"],
             "store_id": chosen_row["store_id"],
@@ -1175,6 +1237,13 @@ async def rebuild_with_offers(
                 "name": original_row["name"],
                 "brand": original_row["brand"],
                 "price": round(original_price, 2) if original_price is not None else None,
+                # saving_vs_original e' la differenza fra questo prezzo e quello
+                # scelto: se l'originale era listino online e lo scelto e'
+                # volantino, i due non sono confrontabili e il risparmio
+                # mostrato non e' un risparmio.
+                "origine": original_origine,
+                "origine_label": original_origine_label,
+                "sconto_affermabile": original_affermabile,
             },
             "chosen": chosen_out,
             "match_kind": match_kind,
@@ -1192,13 +1261,32 @@ async def rebuild_with_offers(
     for res in results:
         chosen = res.get("chosen")
         if chosen and res["match_kind"] != "no_offer_same_product":
-            res["promo_verdict"] = verdicts.get((chosen["product_id"], chosen["store_id"]))
+            # Stesso presidio di promo.py, nella stessa forma: un verdetto
+            # certifica uno SCONTO, e dove lo sconto non e' affermabile non
+            # c'e' niente da certificare, quindi la voce resta SENZA verdetto
+            # (promo_verdict = None, come e' inizializzato).
+            #
+            # Prima qui il verdetto veniva declassato a "promo_non_viva", un
+            # valore in piu' da conoscere per ogni consumatore del contratto, e
+            # mai prodotto: chosen_row arriva da _offers_for, che filtra
+            # is_offer, cioe' lo stesso predicato che genera price_origin, e le
+            # voci "no_offer_same_product" — le sole che possono portare una
+            # riga senza sconto affermabile — questo ramo le esclude gia'.
+            # Resta il caso raro in cui le due valutazioni divergono (la data
+            # civile italiana calcolata da Postgres nella query e da Python
+            # qui, a cavallo della mezzanotte): la' il presidio scatta e la
+            # voce non prende verdetto.
+            if chosen.get("sconto_affermabile"):
+                res["promo_verdict"] = verdicts.get(
+                    (chosen["product_id"], chosen["store_id"])
+                )
 
     # ── 7) riepilogo ───────────────────────────────────────────────────────
     on_offer = {"same_product_on_offer", "same_brand_on_offer", "similar_on_offer"}
     total_estimated = 0.0
     total_without = 0.0
     on_offer_count = brand_kept_count = brand_changed_count = not_found_count = 0
+    origini_confronto: list[str] = []
 
     for res in results:
         qty = res.pop("_quantity", 1.0)
@@ -1212,6 +1300,17 @@ async def rebuild_with_offers(
         if chosen:
             total_estimated += chosen["price"] * qty
             total_without += (base if base is not None else chosen["price"]) * qty
+            if chosen.get("origine"):
+                origini_confronto.append(chosen["origine"])
+            # estimated_saving e' total_without - total_estimated, cioe' i
+            # prezzi ORIGINALI contro quelli scelti: nell'insieme confrontato
+            # entrano entrambi, altrimenti un originale di listino online
+            # contro uno scelto da volantino passerebbe per risparmio senza
+            # che nessuno lo dichiari.
+            if base is not None:
+                orig_origine = (res.get("original") or {}).get("origine")
+                if orig_origine:
+                    origini_confronto.append(orig_origine)
             if res["brand_kept"]:
                 brand_kept_count += 1
             else:
@@ -1226,5 +1325,9 @@ async def rebuild_with_offers(
         "total_estimated": round(total_estimated, 2),
         "total_without_offers": round(total_without, 2),
         "estimated_saving": round(total_without - total_estimated, 2),
+        # total_estimated e' presentato come il costo della spesa: se somma
+        # offerte volantino di catene diverse non e' un importo che l'utente
+        # possa pagare in una volta.
+        "avviso": avviso_origini(origini_confronto),
     }
     return {"items": results, "summary": summary}

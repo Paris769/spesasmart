@@ -74,8 +74,29 @@ export interface Product {
   best_price_in_stock?: boolean | null;
   best_price_scraped_at?: string | null;
   best_price_per_unit?: number | null;
+  /** Provenienza del miglior prezzo: "online" | "negozio" | "volantino" |
+   *  "scaduta" | "segnalato" | "sconosciuta". Opzionale: i backend precedenti
+   *  non la inviano, e in quel caso la UI non deve mostrare nulla (nessun
+   *  default inventato).
+   *  Da leggere con parseOrigine() in lib/priceOrigin, mai a mano. */
+  best_price_origine?: string | null;
+  /** Testo italiano pronto da mostrare (es. "offerta volantino, fino al
+   *  31/08"). Opzionale come best_price_origine. */
+  best_price_origine_label?: string | null;
   /** Prezzo minimo per unita (EUR/kg o EUR/L) sui risultati di ricerca. */
   min_price_per_unit?: number | null;
+  /** Provenienza della RIGA da cui nasce `min_price` (LATERAL `minrow` in
+   *  products.py), non di best_price: sono due record diversi, perche'
+   *  `best` ordina per in_stock DESC (in Postgres NULLS FIRST) mentre
+   *  min_price filtra `in_stock IS TRUE`. Chi stampa `min_price` deve usare
+   *  QUESTA etichetta: best_price_origine appartiene a un altro prezzo, e
+   *  un'etichetta che non appartiene al numero stampato e' peggio di
+   *  un'etichetta assente.
+   *  Da leggere con parseOrigine(), mai a mano. */
+  min_price_origine?: string | null;
+  /** Testo italiano pronto per `min_price`. Opzionale come min_price_origine:
+   *  se il backend non lo manda, nessuna etichetta. */
+  min_price_origine_label?: string | null;
 }
 
 export interface PriceLocation {
@@ -111,6 +132,52 @@ export interface PriceResult {
   chain_locations?: PriceLocation[];
   /** true se il prezzo non viene aggiornato da tempo: da verificare sul sito. */
   stale?: boolean;
+  /** Provenienza del prezzo: "online" (listino e-commerce), "negozio"
+   *  (listino di scaffale), "volantino" (promo a tempo ancora valida),
+   *  "scaduta" (promo finita), "segnalato" (prezzo riferito da un utente) o
+   *  "sconosciuta". Opzionale: i backend precedenti non la inviano.
+   *  Qui NON arriva `source` grezzo di proposito: l'etichetta italiana ha una
+   *  sola fonte di verita', il backend (vedi app/core/price_origin.py).
+   *  Da leggere con parseOrigine() in lib/priceOrigin, mai a mano. */
+  origine?:
+    | "online"
+    | "negozio"
+    | "volantino"
+    | "scaduta"
+    | "segnalato"
+    | "sconosciuta"
+    | null;
+  /** Etichetta pronta da mostrare, con la scadenza quando c'e'
+   *  (es. "offerta volantino, fino al 15/11"). Opzionale come origine. */
+  origine_label?: string | null;
+  /** Permesso di affermare uno SCONTO su questa riga: barrato, "-X%", pill
+   *  del promo_label, badge "Risparmi". E' una domanda DIVERSA da `origine`
+   *  (che dice il tipo di prezzo), e i due assi non vanno fusi: una riga del
+   *  catalogo online puo' portare uno sconto dichiarato dalla catena.
+   *  Da leggere con scontoAffermabile() in lib/priceOrigin, mai a mano.
+   *  Opzionale: senza il campo nessuna affermazione di sconto. */
+  sconto_affermabile?: boolean | null;
+  /** Nome precedente di `sconto_affermabile`, con la regola piu' stretta del
+   *  giro scorso (solo origine "volantino"). Lo manda un backend non ancora
+   *  aggiornato; scontoAffermabile() lo legge come ripiego prudente. */
+  promozione_viva?: boolean | null;
+  /** Avviso di confronto misto, calcolato dal backend e RIPETUTO IDENTICO su
+   *  ogni riga della risposta (fino a 30).
+   *
+   *  Dichiarato perche' esiste sul filo: un campo che arriva e non e' nel tipo
+   *  diventa invisibile a chi legge questo file. NON viene reso dalla home,
+   *  di proposito: il backend lo calcola su TUTTE le righe della risposta,
+   *  mentre la home mostra una riga per catena (groupPricesByChain), quindi
+   *  quel testo puo' nominare una natura di prezzo che in quel confronto non
+   *  si vede. La home mostra la frase generica (AVVISO_CONFRONTO_MISTO in
+   *  lib/priceOrigin, copia del fallback del backend), che non nomina nessuna
+   *  categoria e resta vera in ogni combinazione. Dove invece l'insieme reso
+   *  coincide con quello calcolato (scheda prodotto, scanner, piano di
+   *  acquisto) si passa il testo del backend.
+   *
+   *  Chiesto al backend di mandarlo UNA volta sola, non su ogni riga: vedi
+   *  richieste_ad_altri del giro. */
+  avviso?: string | null;
 }
 // ── Copertura catene ─────────────────────────────────────────────────────────
 
@@ -211,6 +278,13 @@ export interface QuickStoreItem {
   price_per_unit?: number | null;
   /** Disponibilità del prodotto in quel negozio (false = risulta esaurito). */
   in_stock?: boolean | null;
+  /** Provenienza di QUESTO prezzo (vedi PriceResult.origine). Il piano
+   *  carrello e' il totale di cassa dell'app: una voce scelta da un volantino
+   *  vale solo andando in quel negozio, e va dichiarato voce per voce.
+   *  Opzionale: i backend precedenti non la inviano. */
+  origine?: string | null;
+  /** Etichetta italiana pronta, con la scadenza quando c'e'. */
+  origine_label?: string | null;
 }
 
 /** Strategia di ottimizzazione del piano carrello (Fase 1 auto-carrello). */
@@ -245,6 +319,9 @@ export interface QuickStore {
   total: number;
   covered: number;
   items: QuickStoreItem[];
+  /** Avviso del backend quando il TOTALE di questo negozio somma prezzi di
+   *  natura diversa. Opzionale: i backend precedenti non lo inviano. */
+  avviso?: string | null;
 }
 
 export interface QuickOptimizeResult {
@@ -271,9 +348,16 @@ export interface QuickOptimizeResult {
       has_click_collect?: boolean;
       subtotal: number;
       items: QuickStoreItem[];
+      /** Come QuickStore.avviso, per il singolo negozio dello split. */
+      avviso?: string | null;
     }[];
   };
   not_found: string[];
+  /** Avviso sul confronto fra i totali (tutto da un negozio contro lo split):
+   *  `savings_vs_single` e' una differenza fra due somme che possono avere
+   *  natura diversa. Il backend lo manda solo quando il confronto e'
+   *  davvero misto: la UI lo rende senza ricalcolare la condizione. */
+  avviso?: string | null;
 }
 
 export const optimizeQuick = (
@@ -322,6 +406,12 @@ export interface PriceComparison {
   price_avg: number;
   delta_pct: number;
   vs_avg: string;
+  /** Avviso del backend quando min/media/max (e quindi la frase `vs_avg`)
+   *  nascono da prezzi di natura diversa: una media fra un listino online e
+   *  un'offerta volantino non e' una grandezza che significhi qualcosa, e
+   *  l'utente la sta leggendo in corsia. Opzionale: i backend precedenti non
+   *  lo inviano. */
+  avviso?: string | null;
 }
 
 export interface PriceSubmitResult {
@@ -467,6 +557,20 @@ export interface PromoCheckRow {
   median_60d: number | null;
   discount_pct: number | null;
   verdict: PromoVerdict;
+  /** Provenienza del prezzo corrente (vedi PriceResult.origine). */
+  origine?: string | null;
+  /** Etichetta italiana pronta da mostrare. */
+  origine_label?: string | null;
+  /** Permesso di affermare uno sconto (vedi PriceResult.sconto_affermabile).
+   *  Qui e' anche il presidio che decide SE la riga si rende: vedi
+   *  components/ui/PromoCheck.tsx. */
+  sconto_affermabile?: boolean | null;
+  /** Nome precedente del campo (vedi PriceResult.promozione_viva). */
+  promozione_viva?: boolean | null;
+  /** true quando la mediana 60gg nasce da sorgenti di natura diversa: il
+   *  denominatore dello sconto non e' omogeneo, quindi il verdetto non e'
+   *  verificato e non va presentato come una certificazione. */
+  mediana_origini_miste?: boolean | null;
 }
 
 export interface PromoCheckResult {
@@ -496,8 +600,23 @@ export interface NearbyOffer {
   promo_label: string | null;
   /** Data di fine promo (ISO "YYYY-MM-DD"), quando nota (es. volantini). */
   promo_expires: string | null;
-  /** Fonte del prezzo: "flyer" = promo da volantino. */
+  /** Nome tecnico dello spider che ha rilevato il prezzo (es. "flyer", "md",
+   *  "esselunga_web"). NON interpretarlo nei componenti: la provenienza la
+   *  dichiara il backend in `origine`, e classificarla di nuovo lato client
+   *  e' il bug per cui md/lidl/aldi/penny non venivano riconosciuti come
+   *  volantini. Resta esposto solo come specchio del parametro server
+   *  `source=flyer` per il filtro di /offerte su backend vecchi. */
   source: string;
+  /** Provenienza del prezzo dichiarata dal backend (vedi
+   *  PriceResult.origine). Opzionale: senza di essa nessuna etichetta. */
+  origine?: string | null;
+  /** Etichetta italiana pronta da mostrare. Opzionale come origine. */
+  origine_label?: string | null;
+  /** Permesso di affermare uno sconto (vedi PriceResult.sconto_affermabile).
+   *  Da leggere con scontoAffermabile() in lib/priceOrigin. */
+  sconto_affermabile?: boolean | null;
+  /** Nome precedente del campo (vedi PriceResult.promozione_viva). */
+  promozione_viva?: boolean | null;
   price_per_unit: number | null;
   /** Posizione dell'offerta dentro la sua catena (1 = la migliore).
    *  Opzionale: i backend precedenti al ranking round-robin non lo inviano. */
@@ -599,6 +718,12 @@ export interface RebuildOriginal {
   name?: string | null;
   brand?: string | null;
   price?: number | null;
+  /** Provenienza del prezzo di partenza: `saving_vs_original` e' la
+   *  differenza fra questo e il prezzo scelto, e se le due nature non
+   *  coincidono quel risparmio non e' confrontabile. Opzionale anche sui
+   *  backend aggiornati: sulle voci `not_found` il campo non c'e'. */
+  origine?: string | null;
+  origine_label?: string | null;
 }
 
 export interface RebuildChosen {
@@ -612,6 +737,16 @@ export interface RebuildChosen {
   price_per_unit?: number | null;
   promo_label?: string | null;
   promo_expires?: string | null;
+  /** Provenienza del prezzo scelto (vedi PriceResult.origine). Il selettore
+   *  ordina per sconto, quindi le sostituzioni sono quasi tutte da volantino:
+   *  senza etichetta il totale sembra un prezzo da pagare online. */
+  origine?: string | null;
+  origine_label?: string | null;
+  /** Permesso di affermare uno sconto (vedi PriceResult.sconto_affermabile):
+   *  qui gate di barrato, "-X%", pill del promo_label e del badge "fino al". */
+  sconto_affermabile?: boolean | null;
+  /** Nome precedente del campo (vedi PriceResult.promozione_viva). */
+  promozione_viva?: boolean | null;
   chain_slug?: string | null;
   chain_name?: string | null;
   store_id?: string | null;
@@ -640,6 +775,10 @@ export interface RebuildSummary {
   total_estimated?: number | null;
   total_without_offers?: number | null;
   estimated_saving?: number | null;
+  /** Avviso del backend quando le voci scelte hanno natura diversa:
+   *  `total_estimated` non e' un importo che l'utente possa pagare in una
+   *  volta. Opzionale: i backend precedenti non lo inviano. */
+  avviso?: string | null;
 }
 
 export interface RebuildResultData {

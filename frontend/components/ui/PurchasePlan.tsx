@@ -3,6 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { QuickOptimizeResult, outbound, sendPlanToExtension } from "@/lib/api";
 import { RETAIL_SERVICE_CONFIG, minSpendLabel } from "@/lib/retailServices";
 import {
+  condizioneDichiarata,
+  confrontoMisto,
+  parseOrigine,
+} from "@/lib/priceOrigin";
+import OrigineBadge from "@/components/ui/OrigineBadge";
+import AvvisoConfrontoMisto from "@/components/ui/AvvisoConfrontoMisto";
+import {
   ArrowRight,
   Check,
   ExternalLink,
@@ -16,6 +23,8 @@ import {
   Handshake,
   Clock,
   AlertTriangle,
+  CreditCard,
+  Info,
 } from "lucide-react";
 
 type FulfillmentMode = "delivery" | "pickup" | "courier_pickup";
@@ -29,6 +38,9 @@ type PlanStore = {
   has_delivery?: boolean;
   has_click_collect?: boolean;
   total: number;
+  /** Avviso del backend quando il totale di questo negozio somma prezzi di
+   *  natura diversa. */
+  avviso?: string | null;
   items: {
     key: string;
     label: string;
@@ -40,6 +52,9 @@ type PlanStore = {
     match_type?: "exact" | "text";
     matched_product_name?: string;
     in_stock?: boolean | null;
+    /** Provenienza della singola voce, dichiarata dal backend. */
+    origine?: string | null;
+    origine_label?: string | null;
   }[];
 };
 
@@ -54,6 +69,7 @@ function buildPlans(result: QuickOptimizeResult) {
           has_delivery: result.best_single.has_delivery,
           has_click_collect: result.best_single.has_click_collect,
           total: result.best_single.total,
+          avviso: result.best_single.avviso,
           items: result.best_single.items.map((it, i) => ({
             key: `s-${i}`,
             label: it.query,
@@ -64,6 +80,8 @@ function buildPlans(result: QuickOptimizeResult) {
             match_type: it.match_type,
             matched_product_name: it.matched_product_name,
             in_stock: it.in_stock,
+            origine: it.origine,
+            origine_label: it.origine_label,
           })),
         },
       ]
@@ -77,6 +95,7 @@ function buildPlans(result: QuickOptimizeResult) {
     has_delivery: s.has_delivery,
     has_click_collect: s.has_click_collect,
     total: s.subtotal,
+    avviso: s.avviso,
     items: s.items.map((it, i) => ({
       key: `m-${si}-${i}`,
       label: it.query,
@@ -87,6 +106,8 @@ function buildPlans(result: QuickOptimizeResult) {
       match_type: it.match_type,
       matched_product_name: it.matched_product_name,
       in_stock: it.in_stock,
+      origine: it.origine,
+      origine_label: it.origine_label,
     })),
   }));
 
@@ -120,6 +141,26 @@ function supportsService(store: PlanStore, service: FulfillmentMode) {
 export default function PurchasePlan({ result }: { result: QuickOptimizeResult }) {
   const { single, multi } = useMemo(() => buildPlans(result), [result]);
   const hasMulti = (result.multi_store?.savings_vs_single || 0) > 0 && multi.length > 0;
+
+  // Confronto misto, calcolato sulle voci dei piani che l'utente VEDE qui:
+  // sono le stesse voci che compongono i due totali messi a confronto da
+  // `savings_vs_single`. Non si classifica niente (l'origine la dichiara il
+  // backend), si decide solo se la frase serve in questo punto: un avviso
+  // sempre presente diventa invisibile e non protegge nessuno.
+  // Quando il multi-negozio non c'e' (hasMulti false) le sue voci non sono
+  // sullo schermo e non entrano in nessun confronto: includerle allargava
+  // l'insieme oltre quello che l'utente VEDE e faceva comparire l'avviso su
+  // una pagina dove non c'era niente di misto da avvisare. Un avviso che
+  // scatta troppo spesso diventa invisibile e non protegge piu' nessuno.
+  const confrontoMistoVisibile = useMemo(
+    () =>
+      confrontoMisto(
+        (hasMulti ? [...single, ...multi] : single).flatMap((s) =>
+          s.items.map((it) => parseOrigine(it.origine))
+        )
+      ),
+    [single, multi, hasMulti]
+  );
 
   const [fulfillment, setFulfillment] = useState<FulfillmentMode | null>(null);
   const [mode, setMode] = useState<StrategyMode | null>(null);
@@ -261,6 +302,15 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
             Prima scegli il servizio, poi il piano negozio. Dopo la conferma apri il sito ufficiale, fai login e usa i pulsanti prodotto per costruire il carrello.
           </p>
         </div>
+
+        {/* Avviso di confronto misto, UN solo posto per tutta l'app: questo
+            componente e' il piano carrello di /lista, /agente e del box
+            assistente. Il totale "tutto da una catena" puo' essere un importo
+            e-commerce e lo split una somma di offerte valide solo in negozio e
+            solo questa settimana: la differenza fra i due non e' un risparmio
+            garantito. Condizione sulle voci mostrate, testo quello del
+            backend quando lo manda (una sola frase in tutta l'app). */}
+        {confrontoMistoVisibile && <AvvisoConfrontoMisto testo={result.avviso} />}
 
         <div className="grid grid-cols-3 gap-2">
           <button
@@ -418,6 +468,14 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                     {fulfillment === "courier_pickup" && " - incaricato esterno da prenotare separatamente"}
                   </p>
                 )}
+                {/* Il totale di QUESTO negozio somma prezzi di natura diversa:
+                    lo dice il backend, non lo ricalcoliamo qui. */}
+                {s.avviso && (
+                  <p className="mx-3 mb-2 flex gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+                    <Info size={13} className="mt-0.5 shrink-0" />
+                    <span>{s.avviso}</span>
+                  </p>
+                )}
                 {/* Flusso rapido: un click = un prodotto. Apre il prossimo non
                     inserito e lo spunta (la spunta e' reversibile dalla lista
                     sotto). Un'apertura per gesto utente = niente blocco popup. */}
@@ -500,6 +558,34 @@ export default function PurchasePlan({ result }: { result: QuickOptimizeResult }
                             >
                               esaurito
                             </span>
+                          )}
+                          {/* Provenienza della voce: sta nella colonna larga,
+                              a capo sotto gli altri badge, cosi' il prezzo a
+                              destra non si sposta mai. Label completa del
+                              backend: su un volantino la data di scadenza e'
+                              il pezzo d'informazione che tiene in piedi il
+                              totale. */}
+                          {parseOrigine(it.origine) && (
+                            <span className="mt-0.5 flex">
+                              <OrigineBadge
+                                origine={parseOrigine(it.origine)}
+                                label={it.origine_label}
+                              />
+                            </span>
+                          )}
+                          {/* La condizione dichiarata dal backend (oggi solo
+                              la carta fedelta') in chiaro: dentro il badge e'
+                              text-[10px] + truncate e su telefono si taglia
+                              proprio sulla coda, cioe' sulla condizione. E'
+                              la lista con cui si va in cassa: chi non ha la
+                              carta deve saperlo prima, non dopo. */}
+                          {condizioneDichiarata(it.origine_label) && (
+                            <p className="mt-0.5 flex items-start gap-1 text-[11px] font-medium leading-snug text-stone-700">
+                              <CreditCard size={11} className="mt-0.5 shrink-0" />
+                              <span>
+                                vale solo {condizioneDichiarata(it.origine_label)}
+                              </span>
+                            </p>
                           )}
                         </div>
                         <span className="text-sm font-semibold tnum shrink-0">EUR {it.price.toFixed(2)}</span>

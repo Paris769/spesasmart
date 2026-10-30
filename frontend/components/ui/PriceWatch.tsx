@@ -74,11 +74,20 @@ export default function PriceWatch({ productId, productName }: Props) {
     return (
       <div className="rounded-card border border-green-200 bg-green-50 p-3 flex gap-2 text-sm text-green-800">
         <CheckCircle2 size={17} className="shrink-0 mt-0.5" />
+        {/* Di QUALE prezzo si parla: la soglia viene confrontata con il
+            prezzo piu' basso fra tutti quelli correnti, che puo' essere
+            un'offerta a tempo e non un prezzo di scaffale. L'email lo
+            dichiara riga per riga (weekly_digest stampa la provenienza
+            accanto al prezzo); qui, al momento di attivare l'avviso, va
+            detto almeno su che tipo di prezzo si vigila, altrimenti l'utente
+            fissa 1,50 convinto che sia un listino e ci va dopo il volantino. */}
         <p>
           Avviso attivo: ti scrivo a <strong>{email.trim()}</strong> se
           {savedThreshold != null
-            ? ` il prezzo scende sotto EUR ${savedThreshold.toFixed(2)}`
-            : " il prezzo scende, a ogni ribasso"}.
+            ? ` il prezzo piu' basso scende sotto EUR ${savedThreshold.toFixed(2)}`
+            : " il prezzo piu' basso scende, a ogni ribasso"}
+          . Il confronto usa il prezzo piu' basso fra quelli correnti, offerte a
+          tempo comprese: nell'email trovi sempre la provenienza.
         </p>
       </div>
     );

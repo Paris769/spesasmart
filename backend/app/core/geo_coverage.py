@@ -66,8 +66,11 @@ def region_for(lat: Optional[float], lng: Optional[float]) -> Optional[str]:
 
 # ── Dove ciascuna catena "solo online" è realmente disponibile ───────────────
 # Fonte: presenza dei punti vendita/aree di consegna dichiarate dalle insegne.
-# Vale SOLO per le catene senza negozi geolocalizzati nel database: le altre
-# (Famila, Eurospin, Iper, Il Gigante, Italmark…) sono già filtrate per distanza.
+# Vale SOLO per le catene il cui store nel database è VIRTUALE, cioè ha
+# `external_id LIKE '%-online'` (misurati: esselunga-online, carrefour-online,
+# conad-online). Le altre (Famila, Eurospin, Iper, Il Gigante, Italmark…) sono
+# già filtrate per distanza; per Coop e Pam, che consegnano ma hanno uno store
+# fisico, vedi CONSEGNA_SU_NEGOZIO_FISICO qui sotto.
 ONLINE_COVERAGE: dict[str, set[str]] = {
     # Esselunga non ha punti vendita al Sud, nelle isole né nel Nord-Est estremo.
     "esselunga": {
@@ -82,6 +85,26 @@ ONLINE_COVERAGE: dict[str, set[str]] = {
     },
     # Conad è presente in tutta Italia, isole comprese.
     "conad": {r[0] for r in _REGIONI},
+}
+
+# ── Consegna a domicilio appoggiata a un negozio FISICO ─────────────────────
+# Coop e Pam stavano in ONLINE_COVERAGE ed erano configurazione MORTA: il
+# filtro che usa quelle regioni (online_store_sql) si applica solo agli store
+# con `external_id LIKE '%-online'`, e i loro due store non hanno quella
+# forma. Misurati oggi: coop = "easycoop-c_901" (EasyCoop Emilia, Bologna),
+# pam = "pam-a-casa" (Pam a Casa, Spinea VE). Sono quindi trattati come negozi
+# fisici e filtrati per DISTANZA, non per regione: le regioni elencate non
+# venivano lette da nessuno, e leggere ONLINE_COVERAGE come se fossero
+# applicate era il modo di credere filtrata una copertura che non lo è.
+#
+# Tenerle qui fuori rende vero un invariante: ogni chiave di ONLINE_COVERAGE
+# corrisponde a uno store virtuale `-online`. Il dato resta scritto perché è
+# vero (sono le aree di consegna dichiarate dalle insegne) e serve il giorno in
+# cui quei due store prendessero un external_id `-online`: allora la voce torna
+# in ONLINE_COVERAGE e il filtro comincia a funzionare da sé.
+# La rimozione non cambia nessuna riga servita: lo slug finisce nel bind param
+# `no_online`, che è usato SOLO dentro il ramo `external_id LIKE '%-online'`.
+CONSEGNA_SU_NEGOZIO_FISICO: dict[str, set[str]] = {
     # Coop/EasyCoop: consegna nelle regioni storiche di presenza.
     "coop": {
         "toscana", "emilia-romagna", "lombardia", "piemonte", "liguria",

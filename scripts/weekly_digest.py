@@ -4,7 +4,10 @@ Digest settimanale della spesa abituale (Fase 2).
 Per ogni shopping_lists con is_recurring=TRUE e digest_email:
   1. ricalcola il miglior piano (versione semplificata: per ogni voce ancorata
      a un product_id, il miglior prezzo corrente non in quarantena; le voci
-     solo testuali vengono segnalate come "da ancorare");
+     solo testuali vengono segnalate come "da ancorare"). Ogni voce porta la
+     PROVENIENZA del prezzo (app/core/price_origin): l'email viene letta
+     giorni dopo il calcolo e non e' ritrattabile, quindi un'offerta da
+     volantino non puo' uscire travestita da prezzo di scaffale;
   2. confronta il totale con l'ultima esecuzione salvata in
      optimization_result.digest_history (storico append, max 12 entry);
   3. calcola il promo check (app/services/promo.py) per le voci ancorate;
@@ -47,6 +50,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import NullPool  # noqa: E402
 
 from app.core.freshness import fresh_price_sql  # noqa: E402
+from app.core.price_origin import (  # noqa: E402
+    avviso as avviso_origini,
+    descrizione_di,
+    origine_di,
+)
 from app.services.promo import compute_promo_check  # noqa: E402
 
 MIN_VALID_PRICE = 0.10
@@ -64,7 +72,16 @@ _BEST_PRICE_SQL = text(f"""
            pr.product_url AS product_url,
            s.name         AS store_name,
            c.name         AS chain_name,
-           c.slug         AS chain_slug
+           c.slug         AS chain_slug,
+           -- L'email e' una superficie IN USCITA e non ritrattabile: senza
+           -- questi campi la provenienza manca a monte, non solo nella UI.
+           -- source e promo_expires dicono da dove viene il prezzo;
+           -- original_price e promo_label sono la prova che la riga e'
+           -- davvero un'offerta e non il prezzo di scaffale.
+           pr.source         AS source,
+           pr.promo_expires  AS promo_expires,
+           pr.original_price AS original_price,
+           NULLIF(TRIM(pr.promo_label), '') AS promo_label
     FROM prices pr
     JOIN stores s ON s.id = pr.store_id AND s.is_active = TRUE
     JOIN chains c ON c.id = s.chain_id
@@ -105,11 +122,21 @@ def _smtp_config() -> dict | None:
     return None
 
 
+def _origine_riga(row) -> tuple[str, str]:
+    """
+    Origine e etichetta di una riga prezzo. La decisione si prende per RIGA:
+    origine_di/descrizione_di leggono la riga con .get(), cosi' la funzione
+    regge anche una query che non porti una delle prove.
+    """
+    return origine_di(row), descrizione_di(row)
+
+
 async def _compute_plan(db, items: list[dict]) -> dict:
     """Piano semplificato: per ogni voce ancorata il miglior prezzo corrente."""
     per_item: list[dict] = []
     total = 0.0
     chain_stats: dict[str, dict] = {}
+    origini: list[str] = []
 
     for it in items:
         qty = float(it["quantity"] or 1)
@@ -130,18 +157,22 @@ async def _compute_plan(db, items: list[dict]) -> dict:
 
         price = float(row["price"])
         subtotal = round(price * qty, 2)
+        orig, orig_label = _origine_riga(row)
         entry.update({
             "status": "ok",
             "product_id": str(it["product_id"]),
             "resolved_name": it.get("resolved_name"),
             "price": price,
             "subtotal": subtotal,
+            "origine": orig,
+            "origine_label": orig_label,
             "chain_name": row["chain_name"],
             "store_name": row["store_name"],
             "product_url": row["product_url"],
         })
         per_item.append(entry)
         total = round(total + subtotal, 2)
+        origini.append(orig)
 
         st = chain_stats.setdefault(row["chain_name"], {"covered": 0, "total": 0.0})
         st["covered"] += 1
@@ -158,6 +189,13 @@ async def _compute_plan(db, items: list[dict]) -> dict:
         "total": total,
         "best_chain": best_chain,
         "per_item": per_item,
+        # "Totale stimato EUR X - catena migliore Y" e' una somma di prezzi di
+        # natura diversa ogni volta che le origini si mescolano: va detto
+        # accanto al numero, non lasciato dedurre.
+        "avviso": avviso_origini(origini),
+        # Quante voci del piano NON sono prezzi di scaffale: e' la quota del
+        # totale che non si trova piu' in negozio quando il volantino scade.
+        "n_volantino": sum(1 for o in origini if o in ("volantino", "scaduta")),
     }
 
 
@@ -167,19 +205,35 @@ async def _triggered_alerts(db, email: str) -> list[dict]:
         text(f"""
             SELECT a.id::text AS id, a.product_id, a.threshold_price,
                    p.name AS product_name,
-                   (
-                       SELECT MIN(pr.price)
-                       FROM prices pr
-                       JOIN stores s ON s.id = pr.store_id AND s.is_active = TRUE
-                       JOIN chains c ON c.id = s.chain_id
-                       WHERE pr.product_id = a.product_id
-                         AND pr.is_current = TRUE
-                         AND pr.quarantined = FALSE
-                         AND pr.price >= :min_price
-                         AND {_FRESH_SQL}
-                   ) AS current_min_price
+                   best.price          AS current_min_price,
+                   -- `price` con il suo nome serve a _origine_riga, che legge
+                   -- la riga: senza, la prova del barrato resta quella larga
+                   -- (original_price > 0) invece di quella stretta (> price).
+                   best.price          AS price,
+                   best.source         AS source,
+                   best.promo_expires  AS promo_expires,
+                   best.original_price AS original_price,
+                   best.promo_label    AS promo_label
             FROM price_alerts a
             JOIN products p ON p.id = a.product_id
+            -- Era MIN(pr.price) in una sottoquery scalare: dava il numero e
+            -- perdeva la riga da cui veniva. L'avviso prezzo dice "ora a EUR
+            -- X": se quell'X e' un volantino, l'utente va in negozio e non lo
+            -- trova. Serve la RIGA, non solo il minimo.
+            LEFT JOIN LATERAL (
+                SELECT pr.price, pr.source, pr.promo_expires, pr.original_price,
+                       NULLIF(TRIM(pr.promo_label), '') AS promo_label
+                FROM prices pr
+                JOIN stores s ON s.id = pr.store_id AND s.is_active = TRUE
+                JOIN chains c ON c.id = s.chain_id
+                WHERE pr.product_id = a.product_id
+                  AND pr.is_current = TRUE
+                  AND pr.quarantined = FALSE
+                  AND pr.price >= :min_price
+                  AND {_FRESH_SQL}
+                ORDER BY pr.price ASC
+                LIMIT 1
+            ) best ON TRUE
             WHERE a.is_active = TRUE
               AND a.threshold_price IS NOT NULL
               AND lower(a.email) = :email
@@ -190,11 +244,14 @@ async def _triggered_alerts(db, email: str) -> list[dict]:
     triggered = []
     for r in rows:
         if r["current_min_price"] is not None and float(r["current_min_price"]) <= float(r["threshold_price"]):
+            orig, orig_label = _origine_riga(r)
             triggered.append({
                 "id": r["id"],
                 "product_name": r["product_name"],
                 "threshold_price": float(r["threshold_price"]),
                 "current_min_price": float(r["current_min_price"]),
+                "origine": orig,
+                "origine_label": orig_label,
             })
     return triggered
 
@@ -205,24 +262,62 @@ def _render_markdown(lst: dict, plan: dict, prev_total: float | None,
     lines.append(f"_Calcolato il {plan['computed_at'][:16].replace('T', ' ')} UTC_")
     lines.append("")
 
+    # Un'email la si legge giorni dopo. Senza questa riga il lettore prende i
+    # numeri come prezzi di scaffale validi quando entra in negozio: la
+    # colonna "Provenienza" qui sotto dice per ogni voce che prezzo e'.
+    n_volantino = plan.get("n_volantino") or 0
+    if n_volantino:
+        soggetto = ("1 voce di questo piano usa" if n_volantino == 1
+                    else f"{n_volantino} voci di questo piano usano")
+        lines.append(
+            f"**Da leggere prima dei numeri:** {soggetto} un'offerta da "
+            "volantino, valida solo in negozio e solo finché il volantino è "
+            "in corso. Il totale è vero alla data di calcolo qui sopra: se "
+            "leggi l'email qualche giorno dopo, controlla la colonna "
+            "«Provenienza» prima di fidarti della cifra."
+        )
+    else:
+        lines.append(
+            "_Ogni voce riporta la provenienza del prezzo usato (colonna "
+            "«Provenienza»): i prezzi della spesa online non sono i prezzi "
+            "di scaffale._"
+        )
+    lines.append("")
+
     lines.append("## Il tuo piano spesa")
     lines.append("")
-    lines.append("| Voce | Qta | Prezzo | Subtotale | Dove |")
-    lines.append("|---|---:|---:|---:|---|")
+    lines.append("| Voce | Qta | Prezzo | Subtotale | Provenienza | Dove |")
+    lines.append("|---|---:|---:|---:|---|---|")
     for item in plan["per_item"]:
         if item.get("status") == "ok":
             dove = f"{item['chain_name']} — {item['store_name']}"
+            # Se la sorgente non e' mappata, origine() restituisce
+            # "sconosciuta" e descrizione() la rende come "provenienza non
+            # dichiarata": una frase che in un'email, superficie in uscita e
+            # non ritrattabile, suona come un avvertimento sul prezzo e invece
+            # dice solo che l'app non sa classificare quella sorgente. La
+            # regola di presentazione dell'app e' che "sconosciuta" e'
+            # silenziosa (cosi' fa il frontend): qui la cella resta vuota.
+            provenienza = item.get("origine_label") or "—"
+            if item.get("origine") in (None, "sconosciuta"):
+                provenienza = "—"
             lines.append(
                 f"| {item['query']} | {item['quantity']:g} | €{item['price']:.2f} "
-                f"| €{item['subtotal']:.2f} | {dove} |"
+                f"| €{item['subtotal']:.2f} | {provenienza} | {dove} |"
             )
         elif item.get("status") == "da_ancorare":
-            lines.append(f"| {item['query']} | {item['quantity']:g} | — | — | _da ancorare a un prodotto_ |")
+            lines.append(f"| {item['query']} | {item['quantity']:g} | — | — | — | _da ancorare a un prodotto_ |")
         else:
-            lines.append(f"| {item['query']} | {item['quantity']:g} | — | — | _nessun prezzo trovato_ |")
+            lines.append(f"| {item['query']} | {item['quantity']:g} | — | — | — | _nessun prezzo trovato_ |")
     lines.append("")
     lines.append(f"**Totale stimato: €{plan['total']:.2f}**"
                  + (f" — catena migliore: **{plan['best_chain']}**" if plan["best_chain"] else ""))
+    # Il totale somma prezzi di natura diversa: l'avviso sta attaccato al
+    # numero, perche' e' quello il numero che l'utente porta in negozio.
+    if plan.get("avviso"):
+        lines.append("")
+        lines.append(f"⚠️ {plan['avviso']} Il totale e il confronto fra catene "
+                     "mettono quindi insieme grandezze diverse.")
     lines.append("")
 
     if prev_total is not None:
@@ -233,6 +328,12 @@ def _render_markdown(lst: dict, plan: dict, prev_total: float | None,
             lines.append(f"📉 Rispetto all'ultimo digest risparmi €{-delta:.2f} (era €{prev_total:.2f}).")
         else:
             lines.append(f"Totale invariato rispetto all'ultimo digest (€{prev_total:.2f}).")
+        if plan.get("avviso"):
+            # Il totale precedente e' stato costruito sui prezzi di ALLORA, con
+            # le offerte di allora: la differenza non misura solo il mercato.
+            lines.append("_La variazione confronta due totali costruiti su "
+                         "offerte diverse: parte dello scostamento è il "
+                         "volantino che è cambiato, non il prezzo._")
         lines.append("")
 
     if promo_checks:
@@ -243,13 +344,31 @@ def _render_markdown(lst: dict, plan: dict, prev_total: float | None,
             "weak_promo": "🤏 sconto debole",
             "fake_promo": "⚠️ promo gonfiata",
             "insufficient_history": "❓ storico insufficiente",
+            # Qui NON c'è più "promo_non_viva": promo.py non declassa più il
+            # verdetto, non produce il check (vedi il presidio in
+            # compute_promo_check). Tenere la voce significherebbe dichiarare
+            # in un'email una categoria che non esiste più; il .get() sotto
+            # stampa comunque lo slug nudo se un verdetto nuovo arrivasse.
         }
         for pc in promo_checks:
             label = verdict_label.get(pc["verdict"], pc["verdict"])
             median = f"€{pc['median_60d']:.2f}" if pc.get("median_60d") is not None else "n/d"
+            # Il verdetto e' un giudizio pubblicato: va detto che prezzo e' e
+            # su che denominatore poggia. mediana_origini_miste (da promo.py)
+            # e' vero quando la mediana 60gg nasce da sorgenti diverse, cioe'
+            # quando "vera promo" non ha un termine di confronto omogeneo.
+            # Come nella tabella del piano: "sconosciuta" non si stampa.
+            provenienza = pc.get("origine_label")
+            if pc.get("origine") in (None, "sconosciuta"):
+                provenienza = None
+            coda = f" [{provenienza}]" if provenienza else ""
+            if pc.get("mediana_origini_miste"):
+                coda += (" — attenzione: il prezzo abituale è la mediana di "
+                         "rilevazioni di natura diversa, il verdetto non è "
+                         "verificato")
             lines.append(
                 f"- **{pc['product_name']}** da {pc['chain_name']}: €{pc['current_price']:.2f} "
-                f"(mediana 60gg {median}) → {label}"
+                f"(mediana 60gg {median}) → {label}{coda}"
             )
         lines.append("")
 
@@ -257,9 +376,15 @@ def _render_markdown(lst: dict, plan: dict, prev_total: float | None,
         lines.append("## 🔔 Avvisi prezzo scattati")
         lines.append("")
         for a in alerts:
+            # "ora a EUR X" senza provenienza manda l'utente in negozio a
+            # cercare un prezzo che in negozio non esiste.
+            provenienza = a.get("origine_label")
+            if a.get("origine") in (None, "sconosciuta"):
+                provenienza = None
+            coda = f" [{provenienza}]" if provenienza else ""
             lines.append(
                 f"- **{a['product_name']}**: ora a €{a['current_min_price']:.2f} "
-                f"(soglia €{a['threshold_price']:.2f})"
+                f"(soglia €{a['threshold_price']:.2f}){coda}"
             )
         lines.append("")
 

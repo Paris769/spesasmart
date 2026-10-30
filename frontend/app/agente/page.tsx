@@ -28,6 +28,7 @@ import {
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { DEFAULT_LOCATION } from "@/lib/location";
+import { etichettaOrigine, parseOrigine } from "@/lib/priceOrigin";
 
 type AgentItem = {
   query: string;
@@ -687,6 +688,23 @@ export default function AgentePage() {
                         <p className="text-[10px] text-stone-400">
                           {product.price_store_count} negoz{product.price_store_count! > 1 ? "i" : "io"}
                         </p>
+                        {/* Provenienza del "da EUR X", come in ProductPicker:
+                            e' il numero su cui l'utente ancora la voce prima
+                            che finisca nel piano carrello, quindi l'etichetta
+                            dev'essere quella della riga di min_price
+                            (min_price_origine) e non quella di best_price,
+                            che e' un altro record. */}
+                        {etichettaOrigine(parseOrigine(product.min_price_origine)) && (
+                          <p
+                            className={`text-[10px] ${
+                              parseOrigine(product.min_price_origine) === "volantino"
+                                ? "font-semibold text-amber-700"
+                                : "text-stone-400"
+                            }`}
+                          >
+                            {etichettaOrigine(parseOrigine(product.min_price_origine))}
+                          </p>
+                        )}
                       </div>
                     ) : (
                       <span className="text-[11px] font-medium text-stone-400 shrink-0">

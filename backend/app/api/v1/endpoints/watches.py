@@ -17,6 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.freshness import fresh_price_sql
+from app.core.price_origin import descrizione_di, origine_di
 from app.db.session import get_db
 
 router = APIRouter(prefix="/watches", tags=["watches"])
@@ -141,26 +142,50 @@ async def list_watches(email: str = Query(...), db: AsyncSession = Depends(get_d
         text(f"""
             SELECT a.id, a.product_id, p.name AS product_name,
                    a.threshold_price, a.is_active, a.created_at,
-                   (
-                       SELECT MIN(pr.price)
-                       FROM prices pr
-                       JOIN stores s ON s.id = pr.store_id
-                       JOIN chains c ON s.chain_id = c.id
-                       WHERE pr.product_id = a.product_id
-                         AND pr.is_current = TRUE
-                         AND pr.quarantined = FALSE
-                         AND pr.price >= :min_valid_price
-                         AND s.is_active = TRUE
-                         AND {_FRESH_SQL}
-                   ) AS current_min_price
+                   best.price          AS current_min_price,
+                   best.source         AS source,
+                   best.promo_expires  AS promo_expires,
+                   best.original_price AS original_price,
+                   best.promo_label    AS promo_label
             FROM price_alerts a
             JOIN products p ON p.id = a.product_id
+            -- Era MIN(pr.price) in una sottoquery scalare: dava il numero e
+            -- perdeva la riga da cui veniva. current_min_price e' il numero
+            -- che l'utente confronta con la propria soglia: se e' un'offerta
+            -- da volantino che fra tre giorni non esiste piu', la risposta
+            -- deve dirlo. Stessa forma della query del digest settimanale,
+            -- che su questo era gia' stato corretto.
+            LEFT JOIN LATERAL (
+                SELECT pr.price, pr.source, pr.promo_expires, pr.original_price,
+                       NULLIF(TRIM(pr.promo_label), '') AS promo_label
+                FROM prices pr
+                JOIN stores s ON s.id = pr.store_id
+                JOIN chains c ON s.chain_id = c.id
+                WHERE pr.product_id = a.product_id
+                  AND pr.is_current = TRUE
+                  AND pr.quarantined = FALSE
+                  AND pr.price >= :min_valid_price
+                  AND s.is_active = TRUE
+                  AND {_FRESH_SQL}
+                ORDER BY pr.price ASC
+                LIMIT 1
+            ) best ON TRUE
             WHERE lower(a.email) = :email
             ORDER BY a.created_at DESC
         """),
         {"email": email, "min_valid_price": MIN_VALID_PRICE, **_FRESH_PARAMS},
     )
-    return {"watches": [dict(r) for r in result.mappings().all()]}
+    watches = [dict(r) for r in result.mappings().all()]
+
+    # La provenienza si decide per RIGA e la porta la riga del minimo.
+    for w in watches:
+        if w.get("current_min_price") is None:
+            w["origine"] = None
+            w["origine_label"] = None
+        else:
+            w["origine"] = origine_di(w)
+            w["origine_label"] = descrizione_di(w)
+    return {"watches": watches}
 
 
 @router.delete("/{watch_id}", status_code=204)

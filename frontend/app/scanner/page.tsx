@@ -6,6 +6,7 @@ import {
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import PriceCard from "@/components/ui/PriceCard";
+import AvvisoConfrontoMisto from "@/components/ui/AvvisoConfrontoMisto";
 
 type Tab = "barcode" | "scontrino";
 
@@ -108,6 +109,11 @@ function BarcodeTab({ location, radiusKm }: { location: any; radiusKm: number })
               <p className="text-sm text-gray-600">
                 <strong>{result.prices.length}</strong> prezzi trovati entro {radiusKm} km
               </p>
+              {/* Qui l'utente e' in corsia col prodotto in mano: se l'elenco
+                  mette insieme listini online e offerte da volantino deve
+                  leggerlo PRIMA di confrontare. La condizione la calcola il
+                  backend sulle righe che manda, cioe' queste. */}
+              {result.avviso && <AvvisoConfrontoMisto testo={result.avviso} />}
               {result.prices.map((p: any, i: number) => (
                 <PriceCard key={`${p.store_id}-${i}`} result={p} rank={i} />
               ))}
@@ -203,6 +209,11 @@ function PriceSubmitForm({
         <p className="text-xs text-gray-400 text-center">
           Basato su {c.store_count} {c.store_count === 1 ? "negozio" : "negozi"}
         </p>
+        {/* Min/Media/Max e la frase "sopra/sotto la media" nascono da tutti i
+            prezzi correnti del prodotto: se sono di natura diversa, la media
+            non e' una grandezza confrontabile col cartellino che l'utente ha
+            davanti. Lo dichiara il backend, qui si rende. */}
+        {c.avviso && <AvvisoConfrontoMisto testo={c.avviso} />}
       </div>
     );
   }
