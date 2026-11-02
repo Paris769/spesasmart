@@ -230,7 +230,8 @@ class LidlSpider:
             all_ids = [id_by_bc[b] for b in barcodes]
             await self.conn.execute(
                 "UPDATE prices SET is_current = FALSE "
-                "WHERE store_id = $1 AND product_id = ANY($2::uuid[])",
+                "WHERE store_id = $1 AND product_id = ANY($2::uuid[]) "
+                "AND is_current = TRUE",
                 store_id,
                 all_ids,
             )

@@ -15,17 +15,19 @@ intervento manuale. Gira a intervalli (workflow guardian.yml) e:
       conteggi prodotti/prezzi.
 
   AUTO-RIPARA  (con --heal)
-    • DB vicino al limite o in sola-lettura → prune dello storico prezzi.
     • catena ferma e endpoint vivo          → ri-scrape mirato (con --heal all).
     • dopo qualsiasi scrape                  → dedup.
 
   ALLERTA
     • annotazioni GitHub Actions (::error:: / ::warning::) + job summary.
     • exit code 1 SOLO per problemi che richiedono l'uomo (API cambiata =
-      serve fix al codice; DB non scrivibile non risolvibile col prune).
+      serve fix al codice; DB non scrivibile).
+    • avviso quando il DB supera l'80% del limite del piano: lo storico lo
+      pota gia' ogni notte lo scraper (scraper.yml), e un prune in piu' non
+      rimpicciolisce il file (VACUUM non restituisce spazio al disco).
 
 Uso:
-    python -m scraping.guardian                 # check + heal (prune, dedup)
+    python -m scraping.guardian                 # check + heal (dedup)
     python -m scraping.guardian --heal all      # include ri-scrape catene ferme
     python -m scraping.guardian --check-only     # solo diagnosi, nessuna azione
     python -m scraping.guardian --probe-only     # solo liveness endpoint (no DB)
@@ -58,9 +60,24 @@ DB_URL = (
 )
 
 # Soglie configurabili via env (limiti del piano DB e freschezza attesa).
-DB_LIMIT_MB = int(os.getenv("GUARDIAN_DB_LIMIT_MB", "500"))      # free tier ~500MB
+# Disco incluso nel piano Supabase Pro (8 GB per progetto): oltre si paga a
+# consumo. Il vecchio default era il limite del piano free (500 MB): con il
+# DB a ~5.700 MB il Guardian si credeva sempre oltre l'80% e lanciava prune +
+# VACUUM di tutta prices a ogni run, ~8,7 GB di IO ciascuno (misurato su
+# pg_stat_statements il 2/11/2026). Era una delle cause dell'avviso di
+# Supabase sull'esaurimento del Disk IO Budget.
+DB_LIMIT_MB = int(os.getenv("GUARDIAN_DB_LIMIT_MB", "8192"))
 DB_WARN_PCT = int(os.getenv("GUARDIAN_DB_WARN_PCT", "80"))        # warn oltre l'80%
 COVERAGE_MIN_PCT = int(os.getenv("GUARDIAN_COVERAGE_MIN_PCT", "40"))
+
+# Copertura e freschezza per catena scorrono tutti i prezzi correnti (~2 GB di
+# letture a run): si fanno una volta al giorno, non a ogni run da 6 ore. Lo
+# decide il workflow, che passa GUARDIAN_FULL_CHECK=0 ai tre run ridotti: l'ora
+# di avvio non e' affidabile, perche' i cron di GitHub partono con 4-6 ore di
+# ritardo (il run "delle 00" e' partito fra le 03:58 e le 05:37 UTC in tutti
+# gli ultimi 60 run). Senza la variabile il controllo e' completo: e' il caso
+# di un lancio a mano.
+FULL_CHECK = os.getenv("GUARDIAN_FULL_CHECK", "1") != "0"
 
 # Freschezza massima attesa per catena (ore). I cataloghi online si rinfrescano
 # ogni notte; CosìComodo ruota i 101 negozi su più giorni → soglia più ampia.
@@ -198,11 +215,13 @@ class DbHealth:
     prices: int = 0
     prices_current: int = 0
     coverage_pct: float = 0.0
+    # False nei run che saltano copertura e freschezza (vedi FULL_CHECK)
+    full_check: bool = False
     stale_chains: list[str] = field(default_factory=list)
     chain_age_h: dict = field(default_factory=dict)
 
 
-async def check_db(conn: asyncpg.Connection) -> DbHealth:
+async def check_db(conn: asyncpg.Connection, full: bool = True) -> DbHealth:
     h = DbHealth(reachable=True)
 
     # sola-lettura? (disco pieno / default_transaction_read_only)
@@ -223,10 +242,37 @@ async def check_db(conn: asyncpg.Connection) -> DbHealth:
     h.size_pct = round(h.size_mb / DB_LIMIT_MB * 100, 1) if DB_LIMIT_MB else 0.0
 
     h.products = await conn.fetchval("SELECT count(*) FROM products") or 0
-    h.prices = await conn.fetchval("SELECT count(*) FROM prices") or 0
-    h.prices_current = await conn.fetchval(
-        "SELECT count(*) FROM prices WHERE is_current = TRUE"
-    ) or 0
+    # Conteggi di prices dalle statistiche del catalogo, non con count(*): sono
+    # stime aggiornate da ANALYZE, ma per il monitoraggio bastano, e un
+    # count(*) su prices scorre ~5 GB e va oltre il timeout di 120 s della
+    # piattaforma (169 run su 325 morti qui dal 4/08 al 2/11/2026).
+    # Le righe correnti si leggono dall'indice parziale WHERE is_current =
+    # TRUE: le sue tuple sono esattamente le righe correnti.
+    h.prices = int(await conn.fetchval(
+        "SELECT greatest(reltuples, 0) FROM pg_class "
+        "WHERE oid = to_regclass('public.prices')"
+    ) or 0)
+    # Ripiego su idx_prices_store_current, che ha lo stesso predicato: se uno
+    # dei due indici sparisse il dato non deve diventare 0 in silenzio.
+    correnti = await conn.fetchval(
+        "SELECT greatest(reltuples, 0) FROM pg_class WHERE oid = coalesce("
+        "to_regclass('public.idx_prices_current_product_store'), "
+        "to_regclass('public.idx_prices_store_current'))"
+    )
+    if correnti is None:
+        log.warning("Indici parziali dei prezzi correnti mancanti: conteggio non disponibile")
+    h.prices_current = int(correnti or 0)
+
+    if not full:
+        log.info("Copertura e freschezza: saltate (solo nel run giornaliero)")
+        log.info(
+            "DB: %.1f MB (%.0f%% di %d MB) | prodotti=%d prezzi~%d (correnti~%d)",
+            h.size_mb, h.size_pct, DB_LIMIT_MB, h.products, h.prices,
+            h.prices_current,
+        )
+        return h
+
+    h.full_check = True
 
     # Copertura: tra i prodotti con almeno un prezzo corrente, quota con ≥2 negozi.
     cov = await conn.fetchrow(
@@ -265,7 +311,7 @@ async def check_db(conn: asyncpg.Connection) -> DbHealth:
             h.stale_chains.append(slug)
 
     log.info(
-        "DB: %.1f MB (%.0f%% di %d MB) | prodotti=%d prezzi=%d (correnti=%d) | "
+        "DB: %.1f MB (%.0f%% di %d MB) | prodotti=%d prezzi~%d (correnti~%d) | "
         "copertura 2+ negozi=%.1f%%",
         h.size_mb, h.size_pct, DB_LIMIT_MB, h.products, h.prices,
         h.prices_current, h.coverage_pct,
@@ -287,18 +333,19 @@ async def heal(
     rescrape: bool,
 ) -> list[str]:
     """Esegue i rimedi automatici. Ritorna l'elenco delle azioni svolte."""
-    from .prune import prune_prices
     from .dedup_products import dedup
 
     actions: list[str] = []
     alive = {p.name for p in probes if p.alive}
     scraped_any = False
 
-    # 1. Spazio DB: prune se vicino al limite (e DB scrivibile).
-    if health.writable and health.size_pct >= DB_WARN_PCT:
-        log.info("Spazio DB %.0f%% ≥ %d%% → prune storico", health.size_pct, DB_WARN_PCT)
-        deleted = await prune_prices(conn)
-        actions.append(f"prune: {deleted} righe storiche eliminate")
+    # 1. Spazio DB: qui NON si pota piu'. Lo storico lo pota gia' ogni notte
+    #    lo scraper (scraper.yml, `runner --chain prune`), e il prune non
+    #    rimpicciolisce il file: VACUUM senza FULL non restituisce spazio,
+    #    quindi pg_database_size resta sopra soglia e il Guardian ripotava a
+    #    ogni run da 6 ore, con una scansione completa di prices ogni volta.
+    #    Era una delle cause dell'esaurimento del Disk IO Budget (2/11/2026).
+    #    Sopra soglia ora c'e' un avviso in emit_report: serve una persona.
 
     # 2. Ri-scrape catene ferme (solo con --heal all, endpoint vivo, DB scrivibile).
     if rescrape and health.writable and health.stale_chains:
@@ -363,8 +410,13 @@ def emit_report(
     if health:
         if not health.writable:
             critical.append("DB in sola-lettura (disco pieno?) — scritture bloccate")
-        if health.size_pct >= 95:
-            warnings.append(f"DB al {health.size_pct:.0f}% del limite")
+        if health.size_pct >= DB_WARN_PCT:
+            warnings.append(
+                f"DB al {health.size_pct:.0f}% del limite di {DB_LIMIT_MB} MB: "
+                "oltre si paga lo spazio in piu'. Il prune notturno non "
+                "rimpicciolisce il file: serve ridurre la retention o un "
+                "VACUUM FULL / pg_repack in una finestra a scraper fermi"
+            )
         if health.coverage_pct and health.coverage_pct < COVERAGE_MIN_PCT:
             warnings.append(f"copertura 2+ negozi bassa: {health.coverage_pct:.1f}%")
         if health.stale_chains:
@@ -387,8 +439,10 @@ def emit_report(
                 "", "## Database",
                 f"- Dimensione: **{health.size_mb} MB** ({health.size_pct:.0f}% di {DB_LIMIT_MB} MB)",
                 f"- Scrivibile: {'✅' if health.writable else '❌'}",
-                f"- Prodotti: {health.products:,} · Prezzi correnti: {health.prices_current:,}",
-                f"- Copertura 2+ negozi: **{health.coverage_pct:.1f}%**",
+                f"- Prodotti: {health.products:,} · Prezzi correnti (stima): {health.prices_current:,}",
+                (f"- Copertura 2+ negozi: **{health.coverage_pct:.1f}%**"
+                 if health.full_check else
+                 "- Copertura e freschezza: non calcolate in questo run (solo nel run giornaliero)"),
             ]
             if health.chain_age_h:
                 lines.append("- Freschezza per catena (ore):")
@@ -433,7 +487,9 @@ async def main(args: argparse.Namespace) -> int:
 
     conn = await asyncpg.connect(DB_URL)
     try:
-        health = await check_db(conn)
+        # --heal all ri-scrapa le catene ferme: senza il controllo completo
+        # non saprebbe quali sono.
+        health = await check_db(conn, full=FULL_CHECK or args.heal == "all")
         if not args.check_only:
             actions = await heal(conn, health, probes, rescrape=(args.heal == "all"))
             if actions:
@@ -462,7 +518,7 @@ if __name__ == "__main__":
     parser.add_argument("--probe-only", action="store_true",
                         help="Solo liveness endpoint (non richiede DB)")
     parser.add_argument("--heal", choices=["safe", "all"], default="safe",
-                        help="safe=prune+dedup (default); all=anche ri-scrape catene ferme")
+                        help="safe=dedup (default); all=anche ri-scrape catene ferme")
     parser.add_argument("--json-out", default=None,
                         help="Scrive il report JSON nel file indicato")
     sys.exit(asyncio.run(main(parser.parse_args())))

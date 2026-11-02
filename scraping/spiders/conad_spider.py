@@ -322,7 +322,8 @@ class ConadSpider:
             )
 
         await self.conn.execute(
-            "UPDATE prices SET is_current = FALSE WHERE product_id = $1 AND store_id = $2",
+            "UPDATE prices SET is_current = FALSE "
+            "WHERE product_id = $1 AND store_id = $2 AND is_current = TRUE",
             prod_id, store_uuid,
         )
         await self.conn.execute(

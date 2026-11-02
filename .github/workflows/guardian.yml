@@ -3,13 +3,17 @@ name: Guardian (agente autonomo)
 # Agente di sorveglianza e auto-riparazione SpesaSmart.
 # Gira ogni 6 ore: sonda gli endpoint dei cataloghi (rileva i cambi-API che
 # zittiscono uno spider), controlla salute/spazio del DB, freschezza e
-# copertura dati, e auto-ripara (prune storico + dedup). Fallisce SOLO quando
+# copertura dati, e auto-ripara (dedup, ri-scrape). Fallisce SOLO quando
 # serve l'uomo: API cambiata (fix spider) o DB non scrivibile.
 
 on:
   schedule:
-    # Ogni 6 ore (00/06/12/18 UTC)
-    - cron: "0 */6 * * *"
+    # Ogni 6 ore. Il run delle 00 UTC e' quello completo (copertura e
+    # freschezza per catena, ~2 GB di letture); gli altri tre sono ridotti.
+    # Cron separati perche' l'ora di avvio non e' affidabile: GitHub li fa
+    # partire con 4-6 ore di ritardo.
+    - cron: "0 0 * * *"
+    - cron: "0 6,12,18 * * *"
   workflow_dispatch:
     inputs:
       heal:
@@ -45,6 +49,8 @@ jobs:
       - name: Esegui Guardian
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # "0" solo per i tre run ridotti; un lancio a mano e' sempre completo.
+          GUARDIAN_FULL_CHECK: ${{ (github.event_name == 'schedule' && github.event.schedule != '0 0 * * *') && '0' || '1' }}
         run: |
           FLAGS="--heal ${{ inputs.heal || 'safe' }} --json-out guardian-report.json"
           if [ "${{ inputs.check_only }}" = "true" ]; then FLAGS="--check-only --json-out guardian-report.json"; fi

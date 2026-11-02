@@ -50,14 +50,23 @@ async def prune_prices(conn: asyncpg.Connection, days: int | None = None) -> int
         except (ValueError, IndexError):
             deleted = 0
         total += deleted
-        if deleted == 0:
-            break
         log.info("  …%d righe storiche eliminate", total)
+        # Un lotto incompleto vuol dire che la sottoquery ha gia' scorso tutta
+        # la tabella senza trovarne altre: un altro giro sarebbe una scansione
+        # completa a vuoto (~2,7 GB di letture per nulla). Prima si usciva
+        # solo con deleted == 0, cioe' sempre dopo quel giro in piu'.
+        if deleted < _BATCH:
+            break
 
     log.info("=== Prune completato: %d righe storiche eliminate ===", total)
 
     # VACUUM: rende lo spazio riutilizzabile dalla tabella (no VACUUM FULL,
-    # che richiederebbe spazio libero e un lock esclusivo).
+    # che richiederebbe spazio libero e un lock esclusivo). Se non e' stato
+    # cancellato niente non c'e' spazio da recuperare: si salta, perche' un
+    # VACUUM di prices legge ~2 GB e ne scrive ~0,7 anche quando non serve.
+    if total == 0:
+        log.info("VACUUM saltato: nessuna riga eliminata")
+        return total
     try:
         await conn.execute("VACUUM (ANALYZE) prices")
         log.info("VACUUM prices completato")

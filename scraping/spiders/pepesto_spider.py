@@ -105,7 +105,8 @@ async def upsert_products(conn: asyncpg.Connection, chain_slug: str, products: l
 
         # Segna vecchi prezzi come non correnti
         await conn.execute(
-            "UPDATE prices SET is_current = FALSE WHERE product_id = $1 AND store_id = $2",
+            "UPDATE prices SET is_current = FALSE "
+            "WHERE product_id = $1 AND store_id = $2 AND is_current = TRUE",
             product_id, store_id,
         )
 

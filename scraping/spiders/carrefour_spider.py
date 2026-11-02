@@ -453,7 +453,8 @@ class CarrefourSpider:
             # 4. Marca non-correnti i prezzi vecchi (questo negozio)
             await self.conn.execute(
                 "UPDATE prices SET is_current = FALSE "
-                "WHERE store_id = $1 AND product_id = ANY($2::uuid[])",
+                "WHERE store_id = $1 AND product_id = ANY($2::uuid[]) "
+                "AND is_current = TRUE",
                 store_uuid,
                 all_ids,
             )

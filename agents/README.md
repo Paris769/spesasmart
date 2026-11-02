@@ -36,8 +36,9 @@ python -m scraping.guardian --probe-only      # solo liveness endpoint (no DB)
 
 | Variabile | Default | Significato |
 |-----------|---------|-------------|
-| `GUARDIAN_DB_LIMIT_MB` | 500 | Limite storage del piano DB |
-| `GUARDIAN_DB_WARN_PCT` | 80 | Soglia % oltre cui fa il prune |
+| `GUARDIAN_DB_LIMIT_MB` | 8192 | Disco incluso nel piano Supabase Pro: oltre si paga |
+| `GUARDIAN_DB_WARN_PCT` | 80 | Soglia % oltre cui avvisa (il prune lo fa lo scraper ogni notte) |
+| `GUARDIAN_FULL_CHECK` | 1 | `0` salta copertura e freschezza per catena (il workflow lo passa ai 3 run ridotti) |
 | `GUARDIAN_COVERAGE_MIN_PCT` | 40 | Copertura minima 2+ negozi prima dell'avviso |
 
 ## Output
