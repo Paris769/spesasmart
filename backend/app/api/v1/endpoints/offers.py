@@ -230,6 +230,26 @@ async def get_nearby_offers(
                   -- mezzanotte e le 01:00/02:00 italiane il filtro e
                   -- l'etichetta parlavano di due giorni diversi.
                   AND {affermabile}
+                  -- Clausola per l'INDICE, non per la regola: e' il predicato
+                  -- di idx_prices_current_promo_covering (556 MB) scritto
+                  -- alla lettera, perche' il planner usa un indice parziale
+                  -- solo se la query ne ripete il predicato. Senza questa
+                  -- riga il giro del 30/10 aveva portato /offerte da 4,7 s e
+                  -- 2.526 blocchi letti da disco a 32 s e 28.504 blocchi a
+                  -- chiamata (pg_stat_statements, 3/11/2026): ogni visita
+                  -- leggeva ~220 MB.
+                  -- Non toglie righe affermabili oggi: quelle senza barrato
+                  -- ne' label sono le righe flyer (qui per source) e iper,
+                  -- che ha promo_label su tutte le righe correnti. Una riga
+                  -- di listino con una scadenza futura ereditata, senza
+                  -- barrato ne' label, resterebbe fuori: misurate ZERO fra
+                  -- le fresche il 30/10/2026. Se la regola cambia, questa
+                  -- clausola e l'indice vanno rivisti insieme.
+                  AND (
+                        p.original_price > p.price
+                        OR p.promo_label IS NOT NULL
+                        OR p.source = 'flyer'
+                      )
                 ORDER BY p.product_id, ns.chain_id,
                          (CASE WHEN p.original_price > p.price
                                THEN (p.original_price - p.price) / p.original_price
